@@ -9,7 +9,7 @@ from integrations.google import crypto as google_crypto
 from integrations.google.search_console import Site, pick_best_site
 
 from .metrics import compare_periods, compute_range_window, has_comparable_data, parse_range_param, summarize_period
-from .models import SearchConsoleConnection
+from .models import SearchConsoleConnection, SearchConsoleDailyMetric, SearchConsoleTopPage, SearchConsoleTopQuery
 
 pytestmark = pytest.mark.django_db
 
@@ -193,6 +193,38 @@ class TestSearchConsoleEndpoints:
         assert response.status_code == 200
         assert response.data["summary"]["clicks"] == 0
         assert response.data["comparison"] is None
+
+    def test_disconnect_removes_connection_and_stored_metrics(self, client):
+        access, account_id = _register_and_login(client, "sc-disconnect@example.com")
+        business = Business.objects.create(account_id=account_id, name="My Business")
+        SearchConsoleConnection.objects.create(
+            business=business,
+            site_url="sc-domain:example.com",
+            access_token_enc="x",
+            refresh_token_enc="x",
+            token_expires_at=datetime(2030, 1, 1, tzinfo=dt_timezone.utc),
+            scope="scope",
+        )
+        SearchConsoleDailyMetric.objects.create(business=business, date=date(2026, 8, 1), clicks=4, impressions=40, ctr=0.1, position=8)
+        SearchConsoleTopQuery.objects.create(business=business, query="example query", clicks=4, impressions=40, ctr=0.1, position=8)
+        SearchConsoleTopPage.objects.create(business=business, page="https://example.com/", clicks=4, impressions=40, ctr=0.1, position=8)
+
+        response = client.post(reverse("search_console:disconnect", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}")
+
+        assert response.status_code == 200
+        assert response.data == {"connected": False}
+        assert SearchConsoleConnection.objects.filter(business=business).count() == 0
+        assert SearchConsoleDailyMetric.objects.filter(business=business).count() == 0
+        assert SearchConsoleTopQuery.objects.filter(business=business).count() == 0
+        assert SearchConsoleTopPage.objects.filter(business=business).count() == 0
+
+    def test_disconnect_without_connection_returns_400(self, client):
+        access, account_id = _register_and_login(client, "sc-disconnect-missing@example.com")
+        business = Business.objects.create(account_id=account_id, name="My Business")
+
+        response = client.post(reverse("search_console:disconnect", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}")
+
+        assert response.status_code == 400
 
     def test_authorize_url_fails_cleanly_when_not_configured(self, client, settings):
         settings.GOOGLE_OAUTH_CLIENT_ID = ""

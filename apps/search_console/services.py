@@ -145,6 +145,21 @@ def sync_search_console(connection: SearchConsoleConnection) -> None:
         connection.save(update_fields=["last_sync_error", "updated_at"])
 
 
+def disconnect_search_console(business: Business) -> bool:
+    """Removes the saved Google connection and the metrics that came from it."""
+    connection = SearchConsoleConnection.objects.filter(business=business).first()
+    if connection is None:
+        return False
+
+    with transaction.atomic():
+        connection.delete()
+        SearchConsoleDailyMetric.objects.filter(business=business).delete()
+        SearchConsoleTopQuery.objects.filter(business=business).delete()
+        SearchConsoleTopPage.objects.filter(business=business).delete()
+
+    return True
+
+
 def get_overview(business: Business, days: int) -> dict:
     window = compute_range_window(days)
 

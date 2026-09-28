@@ -89,7 +89,7 @@ class CallbackView(APIView):
             return self._redirect_to_frontend(business_id=None, params={"scError": "connection_failed"})
 
     def _redirect_to_frontend(self, *, business_id, params: dict) -> HttpResponseRedirect:
-        path = f"/businesses/{business_id}" if business_id else "/"
+        path = f"/businesses/{business_id}/performance" if business_id else "/"
         return HttpResponseRedirect(f"{settings.FRONTEND_URL}{path}?{urlencode(params)}")
 
 
@@ -98,6 +98,15 @@ class _UserIdShim:
 
     def __init__(self, user_id: str):
         self.id = user_id
+
+
+class DisconnectView(APIView):
+    def post(self, request, business_id):
+        business = get_business_or_404(request.user, business_id)
+        removed = services.disconnect_search_console(business)
+        if not removed:
+            return Response({"detail": "Google Search Console is not connected for this business."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"connected": False})
 
 
 class SyncView(APIView):

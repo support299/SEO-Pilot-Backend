@@ -8,3 +8,15 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 # browser silently drops the refresh cookie.
 CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SECURE = False
+
+# Vite may hop off 5173 when the port is busy; keep login working either way.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+]
