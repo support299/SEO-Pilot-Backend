@@ -1,4 +1,7 @@
+import logging
+
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.http import urlencode
@@ -17,6 +20,8 @@ from .metrics import compare_periods, has_comparable_data, parse_range_param
 from .models import SearchConsoleConnection, SearchConsoleTopPage, SearchConsoleTopQuery
 from .serializers import ConnectionStatusSerializer, DailyMetricSerializer, TopPageSerializer, TopQuerySerializer
 from .tasks import sync_business_search_console
+
+logger = logging.getLogger("django")
 
 
 class ConnectionStatusView(APIView):
@@ -77,12 +82,15 @@ class CallbackView(APIView):
                 raise services.SearchConsoleError("Google did not return the expected authorization response.")
 
             payload = services.read_oauth_state(state)
-            business = get_business_or_404(_UserIdShim(payload.user_id), payload.business_id)
+            try:
+                user = get_user_model().objects.get(pk=payload.user_id)
+            except get_user_model().DoesNotExist as exc:
+                raise services.SearchConsoleError("The signed-in user no longer exists.") from exc
+            business = get_business_or_404(user, payload.business_id)
 
             redirect_uri = request.build_absolute_uri(reverse("search_console:callback"))
             services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
-
-            sync_business_search_console.delay(business.id)
+            _enqueue_sync(business.id)
 
             return self._redirect_to_frontend(business_id=business.id, params={"scConnected": "1"})
         except (services.SearchConsoleError, GoogleApiError, google_crypto.InvalidOAuthState):
@@ -93,11 +101,14 @@ class CallbackView(APIView):
         return HttpResponseRedirect(f"{settings.FRONTEND_URL}{path}?{urlencode(params)}")
 
 
-class _UserIdShim:
-    """get_business_or_404 only needs `.id` off whatever's passed as `user` — this avoids an extra DB query for a User we don't otherwise need in the callback."""
-
-    def __init__(self, user_id: str):
-        self.id = user_id
+def _enqueue_sync(business_id: int) -> bool:
+    """Queue a sync. A down broker must not turn a finished Google login into a 500."""
+    try:
+        sync_business_search_console.delay(business_id)
+    except Exception:
+        logger.exception("Could not enqueue Search Console sync for business %s", business_id)
+        return False
+    return True
 
 
 class DisconnectView(APIView):
@@ -120,7 +131,8 @@ class SyncView(APIView):
         if not connection:
             return Response({"detail": "Google Search Console is not connected for this business."}, status=status.HTTP_400_BAD_REQUEST)
 
-        sync_business_search_console.delay(business.id)
+        if not _enqueue_sync(business.id):
+            return Response({"detail": "Search Console is connected, but the sync queue is unavailable. Start Redis and the Celery worker, then try again."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"detail": "Sync started."}, status=status.HTTP_202_ACCEPTED)
 
 

@@ -1,4 +1,10 @@
+import sys
+
 from .base import *  # noqa: F403
+
+# Celery's default prefork pool crashes on Windows (WinError 6). Solo runs the task in-process.
+if sys.platform == "win32":
+    CELERY_WORKER_POOL = "solo"
 
 DEBUG = True
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
