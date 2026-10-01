@@ -5,6 +5,7 @@ from rest_framework.test import APIClient
 from apps.businesses.models import Business, Membership
 
 from .crawl import FetchedPage, build_findings, parse_html, same_site, score_findings
+from .models import CrawledPage, CrawlRun, Finding
 
 pytestmark = pytest.mark.django_db
 
@@ -76,6 +77,48 @@ class TestSiteHealthEndpoints:
         assert response.status_code == 200
         assert response.data["status"] == "none"
         assert response.data["score"] is None
+        assert response.data["pages"] == []
+
+    def test_completed_crawl_lists_fetched_pages_and_findings(self, client):
+        access, account_id = _login(client, "health-pages@example.com")
+        business = Business.objects.create(account_id=account_id, name="Crawled", website="https://saasyway.com")
+        crawl = CrawlRun.objects.create(
+            business=business,
+            seed_url="https://saasyway.com",
+            status=CrawlRun.Status.COMPLETED,
+            score=80,
+            pages_crawled=1,
+        )
+        CrawledPage.objects.create(
+            crawl=crawl,
+            url="https://saasyway.com/about",
+            status_code=200,
+            title="About",
+            meta_description="About the company",
+            noindex=False,
+        )
+        Finding.objects.create(
+            crawl=crawl,
+            url="https://saasyway.com/about",
+            category="Titles",
+            severity=Finding.Severity.MEDIUM,
+            title="Duplicate title",
+            detail="This title is shared with 1 other crawled page(s).",
+        )
+
+        response = client.get(reverse("site_health:report", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}")
+
+        assert response.status_code == 200
+        assert response.data["pages"] == [
+            {
+                "url": "https://saasyway.com/about",
+                "status_code": 200,
+                "title": "About",
+                "meta_description": "About the company",
+                "noindex": False,
+            }
+        ]
+        assert response.data["findings"][0]["url"] == "https://saasyway.com/about"
 
     def test_crawl_requires_a_website(self, client):
         access, account_id = _login(client, "health-noweb@example.com")

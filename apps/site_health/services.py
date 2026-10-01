@@ -23,6 +23,7 @@ def latest_report(business: Business) -> dict:
             "finished_at": None,
             "categories": [],
             "findings": [],
+            "pages": [],
         }
     return serialize_crawl(crawl)
 
@@ -49,6 +50,16 @@ def serialize_crawl(crawl: CrawlRun) -> dict:
         "findings": [
             {"url": finding.url, "category": finding.category, "severity": finding.severity, "title": finding.title, "detail": finding.detail}
             for finding in findings
+        ],
+        "pages": [
+            {
+                "url": page.url,
+                "status_code": page.status_code,
+                "title": page.title,
+                "meta_description": page.meta_description,
+                "noindex": page.noindex,
+            }
+            for page in pages
         ],
     }
 
