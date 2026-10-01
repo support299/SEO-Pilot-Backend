@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.businesses",
     "apps.search_console",
+    "apps.site_health",
 ]
 
 MIDDLEWARE = [
