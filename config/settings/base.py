@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.businesses",
     "apps.search_console",
+    "apps.analytics",
     "apps.site_health",
 ]
 
@@ -145,6 +146,10 @@ CELERY_BEAT_SCHEDULE = {
     "sync-all-search-console-connections-daily": {
         "task": "apps.search_console.tasks.sync_all_search_console_connections",
         "schedule": 60 * 60 * 24,  # once a day; a real deployment would use crontab() to pin a specific time
+    },
+    "sync-all-analytics-connections-daily": {
+        "task": "apps.analytics.tasks.sync_all_analytics_connections",
+        "schedule": 60 * 60 * 24,
     },
 }
 

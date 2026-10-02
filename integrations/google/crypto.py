@@ -57,15 +57,18 @@ class OAuthStatePayload:
     user_id: str
     issued_at: float
     nonce: str
+    redirect_uri: str | None = None
 
 
-def sign_oauth_state(business_id: str, user_id: str, secret: str) -> str:
+def sign_oauth_state(business_id: str, user_id: str, secret: str, redirect_uri: str | None = None) -> str:
     payload = {
         "business_id": business_id,
         "user_id": user_id,
         "issued_at": time.time(),
         "nonce": _b64url_encode(os.urandom(9)),
     }
+    if redirect_uri:
+        payload["redirect_uri"] = redirect_uri
     body = _b64url_encode(json.dumps(payload).encode("utf-8"))
     signature = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url_encode(signature)}"
@@ -94,4 +97,5 @@ def verify_oauth_state(state: str, secret: str) -> OAuthStatePayload:
         user_id=payload["user_id"],
         issued_at=payload["issued_at"],
         nonce=payload["nonce"],
+        redirect_uri=payload.get("redirect_uri"),
     )
