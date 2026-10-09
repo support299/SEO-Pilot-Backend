@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.businesses.models import Business
+from apps.history.services import record_event
 from integrations.google import analytics as ga_api
 from integrations.google import crypto as google_crypto
 
@@ -153,6 +154,7 @@ def sync_analytics(connection: AnalyticsConnection) -> None:
         logger.warning("Analytics sync failed for business %s: %s", business.id, exc)
         connection.last_sync_error = str(exc)
         connection.save(update_fields=["last_sync_error", "updated_at"])
+        record_event(business, "analytics.sync_failed", f"Analytics sync failed: {exc}")
 
 
 def disconnect_analytics(business: Business) -> bool:

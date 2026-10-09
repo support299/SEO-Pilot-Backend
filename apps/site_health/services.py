@@ -3,6 +3,7 @@ import logging
 from django.utils import timezone
 
 from apps.businesses.models import Business
+from apps.history.services import crawl_event_fields, record_event
 
 from .crawl import CrawlFinding, SiteCrawler, build_findings, category_summaries, score_findings
 from .models import CrawledPage, CrawlRun, Finding
@@ -107,12 +108,16 @@ def execute_crawl(crawl_id: int) -> None:
         crawl.critical_issues = sum(1 for finding in findings if finding.severity == "critical")
         crawl.finished_at = timezone.now()
         crawl.save(update_fields=["status", "score", "pages_crawled", "critical_issues", "finished_at"])
+        kind, summary, metadata = crawl_event_fields(crawl, len(findings))
+        record_event(crawl.business, kind, summary, metadata=metadata)
     except Exception as exc:
         logger.exception("Site crawl failed for crawl %s", crawl_id)
         crawl.status = CrawlRun.Status.FAILED
         crawl.error = str(exc)
         crawl.finished_at = timezone.now()
         crawl.save(update_fields=["status", "error", "finished_at"])
+        kind, summary, metadata = crawl_event_fields(crawl)
+        record_event(crawl.business, kind, summary, metadata=metadata)
 
 
 def _page_as_fetched(page: CrawledPage):

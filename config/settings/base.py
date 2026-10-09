@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.site_health",
     "apps.approvals",
+    "apps.history",
 ]
 
 MIDDLEWARE = [

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.history.services import record_event
 from common.permissions import get_business_or_404
 from integrations.google import crypto as google_crypto
 from integrations.google.analytics import GoogleApiError
@@ -69,7 +70,8 @@ class CallbackView(APIView):
             business = get_business_or_404(user, payload.business_id)
 
             redirect_uri = payload.redirect_uri or request.build_absolute_uri(reverse("analytics:callback"))
-            services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
+            connection = services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
+            record_event(business, "analytics.connected", f"Connected Google Analytics ({connection.property_name}).", actor=user)
             _enqueue_sync(business.id)
             return self._redirect_to_frontend(business_id=business.id, params={"gaConnected": "1"})
         except services.AnalyticsError as exc:
@@ -107,6 +109,7 @@ class DisconnectView(APIView):
         removed = services.disconnect_analytics(business)
         if not removed:
             return Response({"detail": "Google Analytics is not connected for this business."}, status=status.HTTP_400_BAD_REQUEST)
+        record_event(business, "analytics.disconnected", "Disconnected Google Analytics and removed its stored data.", actor=request.user)
         return Response({"connected": False})
 
 

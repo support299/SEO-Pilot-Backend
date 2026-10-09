@@ -1,6 +1,7 @@
 from django.utils import timezone
 
 from apps.businesses.models import Business
+from apps.history.services import record_event
 from apps.site_health.models import CrawlRun
 
 from .models import Approval
@@ -89,4 +90,7 @@ def record_decision(approval: Approval, decision: str, user) -> Approval:
         approval.decided_by = user
         approval.decided_at = timezone.now()
     approval.save(update_fields=["status", "decided_by", "decided_at", "updated_at"])
+    verb = {Approval.Status.APPROVED: "Approved", Approval.Status.REJECTED: "Rejected", Approval.Status.PENDING: "Reopened"}[decision]
+    kind = "approval.reopened" if decision == Approval.Status.PENDING else f"approval.{decision}"
+    record_event(approval.business, kind, f"{verb} \"{approval.title}\".", actor=user, metadata={"approval_id": approval.id})
     return approval

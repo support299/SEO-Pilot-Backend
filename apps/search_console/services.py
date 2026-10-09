@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.businesses.models import Business
+from apps.history.services import record_event
 from integrations.google import crypto as google_crypto
 from integrations.google import search_console as gsc_api
 
@@ -143,6 +144,7 @@ def sync_search_console(connection: SearchConsoleConnection) -> None:
         logger.warning("Search Console sync failed for business %s: %s", business.id, exc)
         connection.last_sync_error = str(exc)
         connection.save(update_fields=["last_sync_error", "updated_at"])
+        record_event(business, "search_console.sync_failed", f"Search Console sync failed: {exc}")
 
 
 def disconnect_search_console(business: Business) -> bool:

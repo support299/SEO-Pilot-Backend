@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.history.services import record_event
 from common.permissions import get_business_or_404
 from integrations.google import crypto as google_crypto
 from integrations.google.search_console import GoogleApiError
@@ -89,7 +90,8 @@ class CallbackView(APIView):
             business = get_business_or_404(user, payload.business_id)
 
             redirect_uri = request.build_absolute_uri(reverse("search_console:callback"))
-            services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
+            connection = services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
+            record_event(business, "search_console.connected", f"Connected Google Search Console ({connection.site_url.replace('sc-domain:', '')}).", actor=user)
             _enqueue_sync(business.id)
 
             return self._redirect_to_frontend(business_id=business.id, params={"scConnected": "1"})
@@ -117,6 +119,7 @@ class DisconnectView(APIView):
         removed = services.disconnect_search_console(business)
         if not removed:
             return Response({"detail": "Google Search Console is not connected for this business."}, status=status.HTTP_400_BAD_REQUEST)
+        record_event(business, "search_console.disconnected", "Disconnected Google Search Console and removed its stored data.", actor=request.user)
         return Response({"connected": False})
 
 
