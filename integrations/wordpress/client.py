@@ -167,16 +167,32 @@ def can_publish(user: WpUser) -> bool:
     return bool(caps.get("edit_pages") or caps.get("edit_posts") or caps.get("publish_posts") or caps.get("administrator"))
 
 
+MAX_LIST_PAGES = 10  # safety cap: 10 x 100 = 1000 items per type
+
+
 def list_objects(api_url: str, object_type: str, username: str, application_password: str, *, limit: int = 100) -> list[WpObject]:
+    """Fetch every page/post by walking WordPress's `page=N` pagination (max 100 per request)."""
     endpoint = "pages" if object_type == "page" else "posts"
-    payload = wp_fetch_json(
-        api_url,
-        f"/wp/v2/{endpoint}?context=edit&per_page={min(limit, 100)}&status=publish,draft,pending,private&_fields={WP_LIST_FIELDS}",
-        username=username,
-        application_password=application_password,
-        timeout=LIST_REQUEST_TIMEOUT_SECONDS,
-    )
-    return [_to_wp_object(item) for item in (payload if isinstance(payload, list) else [])]
+    per_page = min(limit, 100)
+    objects: list[WpObject] = []
+    for page in range(1, MAX_LIST_PAGES + 1):
+        try:
+            payload = wp_fetch_json(
+                api_url,
+                f"/wp/v2/{endpoint}?context=edit&per_page={per_page}&page={page}&status=publish,draft,pending,private&_fields={WP_LIST_FIELDS}",
+                username=username,
+                application_password=application_password,
+                timeout=LIST_REQUEST_TIMEOUT_SECONDS,
+            )
+        except WordPressError:
+            if page == 1:
+                raise
+            break  # WordPress answers 400 for a page number past the last one
+        items = payload if isinstance(payload, list) else []
+        objects.extend(_to_wp_object(item) for item in items)
+        if len(items) < per_page:
+            break
+    return objects
 
 
 def fetch_object(api_url: str, object_type: str, object_id: int, username: str, application_password: str) -> WpObject:
