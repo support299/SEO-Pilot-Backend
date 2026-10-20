@@ -23,6 +23,12 @@ REQUEST_TIMEOUT_SECONDS = 10
 # which some WordPress hosts answer much slower than single-object lookups.
 LIST_REQUEST_TIMEOUT_SECONDS = 30
 MAX_RESPONSE_BYTES = 1_000_000
+# Only ask WordPress for the fields we read. context=edit otherwise returns every
+# page's full body, and `meta` carries page-builder data (_elementor_data can be
+# 100KB+ per page) — together that made the 100-item list slow and over the size cap.
+# The list view needs no meta; a single-object fetch does (current meta description).
+WP_LIST_FIELDS = "id,title,slug,status,link,modified_gmt"
+WP_OBJECT_FIELDS = WP_LIST_FIELDS + ",meta"
 
 
 class WordPressError(Exception):
@@ -165,7 +171,7 @@ def list_objects(api_url: str, object_type: str, username: str, application_pass
     endpoint = "pages" if object_type == "page" else "posts"
     payload = wp_fetch_json(
         api_url,
-        f"/wp/v2/{endpoint}?context=edit&per_page={min(limit, 100)}&status=publish,draft,pending,private",
+        f"/wp/v2/{endpoint}?context=edit&per_page={min(limit, 100)}&status=publish,draft,pending,private&_fields={WP_LIST_FIELDS}",
         username=username,
         application_password=application_password,
         timeout=LIST_REQUEST_TIMEOUT_SECONDS,
@@ -175,7 +181,7 @@ def list_objects(api_url: str, object_type: str, username: str, application_pass
 
 def fetch_object(api_url: str, object_type: str, object_id: int, username: str, application_password: str) -> WpObject:
     endpoint = "pages" if object_type == "page" else "posts"
-    payload = wp_fetch_json(api_url, f"/wp/v2/{endpoint}/{object_id}?context=edit", username=username, application_password=application_password)
+    payload = wp_fetch_json(api_url, f"/wp/v2/{endpoint}/{object_id}?context=edit&_fields={WP_OBJECT_FIELDS}", username=username, application_password=application_password)
     return _to_wp_object(payload)
 
 
