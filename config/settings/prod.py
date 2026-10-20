@@ -11,3 +11,8 @@ CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Behind nginx: trust the proxy's X-Forwarded-Proto so SECURE_SSL_REDIRECT doesn't loop.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
