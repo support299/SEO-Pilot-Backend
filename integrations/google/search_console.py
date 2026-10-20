@@ -119,21 +119,39 @@ def list_sites(access_token: str) -> list[Site]:
 
 
 def pick_best_site(sites: list[Site], website: str | None) -> Site | None:
-    """Picks the site matching the business's website's domain, or the first available one."""
+    """
+    Matches the business's own website to one of the Google account's
+    verified Search Console properties. Deliberately conservative: this used
+    to fall back to "the first available property" whenever nothing matched,
+    which silently attached an unrelated website's search data to a business
+    that never verified it — a real data-integrity bug, not a hypothetical
+    one (it's what produced business A showing business B's numbers). An
+    unmatched business must get a clear "nothing matched" result, never a
+    guess, mirroring pick_best_property()'s already-correct GA4 behavior.
+    """
     if not sites:
         return None
-    if not website:
-        return sites[0]
 
-    host = _safe_hostname(website)
+    host = _safe_hostname(website) if website else None
     if not host:
-        return sites[0]
+        # No website on file to check against — only safe to auto-pick when
+        # there's no ambiguity (exactly one property) to begin with.
+        return sites[0] if len(sites) == 1 else None
 
     for site in sites:
-        site_host = site.site_url.replace("sc-domain:", "") if site.site_url.startswith("sc-domain:") else _safe_hostname(site.site_url)
-        if site_host == host:
+        if _site_hostname(site) == host:
             return site
-    return sites[0]
+
+    # The business has a website, and it matches none of the available
+    # properties — even if there's only one property, attaching it would be
+    # a guess, not a verified match.
+    return None
+
+
+def _site_hostname(site: Site) -> str | None:
+    if site.site_url.startswith("sc-domain:"):
+        return site.site_url.replace("sc-domain:", "")
+    return _safe_hostname(site.site_url)
 
 
 def _safe_hostname(url: str) -> str | None:

@@ -14,4 +14,5 @@ urlpatterns = [
     path("", include("apps.site_health.urls")),
     path("", include("apps.approvals.urls")),
     path("", include("apps.history.urls")),
+    path("", include("apps.wordpress.urls")),
 ]

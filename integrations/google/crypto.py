@@ -1,9 +1,11 @@
 """
-AES-256-GCM encryption for OAuth tokens at rest, and HMAC signing for the
-OAuth `state` parameter. Deliberately mirrors the scheme in the old Next.js
-app's src/lib/google/crypto.ts — same algorithm, same envelope shape
-philosophy — just re-implemented in Python. No Django imports: this module
+HMAC signing for the OAuth `state` parameter. No Django imports: this module
 doesn't know or care what web framework calls it.
+
+encrypt_secret/decrypt_secret used to live here but have no Google-specific
+logic, so they moved to common/crypto.py (shared by every integration that
+stores a credential, e.g. WordPress). Re-exported below so existing imports
+(`from integrations.google.crypto import encrypt_secret`) keep working.
 """
 
 from __future__ import annotations
@@ -16,7 +18,16 @@ import os
 import time
 from dataclasses import dataclass
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from common.crypto import decrypt_secret, encrypt_secret
+
+__all__ = [
+    "encrypt_secret",
+    "decrypt_secret",
+    "OAuthStatePayload",
+    "sign_oauth_state",
+    "verify_oauth_state",
+    "InvalidOAuthState",
+]
 
 STATE_TTL_SECONDS = 15 * 60
 
@@ -28,27 +39,6 @@ def _b64url_encode(data: bytes) -> str:
 def _b64url_decode(data: str) -> bytes:
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding)
-
-
-def _derive_key(secret: str) -> bytes:
-    return hashlib.sha256(secret.encode("utf-8")).digest()
-
-
-def encrypt_secret(payload: dict, secret: str) -> str:
-    key = _derive_key(secret)
-    nonce = os.urandom(12)
-    aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, json.dumps(payload).encode("utf-8"), None)
-    return _b64url_encode(nonce + ciphertext)
-
-
-def decrypt_secret(envelope: str, secret: str) -> dict:
-    key = _derive_key(secret)
-    raw = _b64url_decode(envelope)
-    nonce, ciphertext = raw[:12], raw[12:]
-    aesgcm = AESGCM(key)
-    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return json.loads(plaintext)
 
 
 @dataclass

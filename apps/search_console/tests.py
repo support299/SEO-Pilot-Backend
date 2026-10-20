@@ -78,9 +78,30 @@ class TestPickBestSite:
         sites = [Site("https://other.com/", "siteOwner"), Site("sc-domain:example.com", "siteOwner")]
         assert pick_best_site(sites, "https://example.com").site_url == "sc-domain:example.com"
 
-    def test_falls_back_to_first_when_no_match(self):
+    def test_refuses_to_guess_when_website_does_not_match_the_only_site(self):
+        """
+        Regression test for a real data-integrity bug: this used to fall back
+        to "the first available property" whenever nothing matched, which
+        silently attached an unrelated website's search data to a business
+        that never verified it in Search Console (business A ended up showing
+        business B's numbers). It must now refuse and return None instead of
+        guessing.
+        """
         sites = [Site("https://other.com/", "siteOwner")]
-        assert pick_best_site(sites, "https://unrelated.com").site_url == "https://other.com/"
+        assert pick_best_site(sites, "https://unrelated.com") is None
+
+    def test_refuses_to_guess_among_multiple_non_matching_sites(self):
+        sites = [Site("https://a.com/", "siteOwner"), Site("https://b.com/", "siteOwner")]
+        assert pick_best_site(sites, "https://unrelated.com") is None
+
+    def test_auto_selects_the_only_site_when_business_has_no_website_on_file(self):
+        """No website set means no conflicting signal — safe to use the one available property."""
+        sites = [Site("https://other.com/", "siteOwner")]
+        assert pick_best_site(sites, None).site_url == "https://other.com/"
+
+    def test_refuses_to_guess_among_multiple_sites_when_business_has_no_website_on_file(self):
+        sites = [Site("https://a.com/", "siteOwner"), Site("https://b.com/", "siteOwner")]
+        assert pick_best_site(sites, None) is None
 
     def test_returns_none_for_empty_list(self):
         assert pick_best_site([], "https://example.com") is None

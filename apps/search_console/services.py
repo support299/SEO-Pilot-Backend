@@ -62,7 +62,13 @@ def complete_connection(*, business: Business, code: str, redirect_uri: str) -> 
     sites = gsc_api.list_sites(tokens.access_token)
     site = gsc_api.pick_best_site(sites, business.website)
     if site is None:
-        raise SearchConsoleError("No Search Console properties are available for this Google account.")
+        if not sites:
+            raise SearchConsoleError("That Google account has no Search Console properties. Verify this website in Search Console first, then try again.")
+        available = ", ".join(s.site_url.replace("sc-domain:", "") for s in sites)
+        raise SearchConsoleError(
+            f"None of this Google account's verified Search Console properties ({available}) match {business.website or 'this business’s website'}. "
+            "Verify the correct website in Search Console, or connect using the Google account that manages it."
+        )
 
     secret = _token_encryption_secret()
     connection, _created = SearchConsoleConnection.objects.update_or_create(

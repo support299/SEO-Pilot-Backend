@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.site_health",
     "apps.approvals",
     "apps.history",
+    "apps.wordpress",
 ]
 
 MIDDLEWARE = [
@@ -128,6 +129,7 @@ SIMPLE_JWT = {
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
 GOOGLE_OAUTH_CLIENT_SECRET = config("GOOGLE_OAUTH_CLIENT_SECRET", default="")
 SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY = config("SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY", default="")
+WORDPRESS_CREDENTIAL_ENCRYPTION_KEY = config("WORDPRESS_CREDENTIAL_ENCRYPTION_KEY", default="")
 SEARCH_CONSOLE_OAUTH_STATE_SECRET = config("SEARCH_CONSOLE_OAUTH_STATE_SECRET", default="")
 # Where the frontend lives — OAuth callback redirects the browser here when done.
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
