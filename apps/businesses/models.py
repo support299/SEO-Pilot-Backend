@@ -25,6 +25,7 @@ class Membership(models.Model):
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"
         MEMBER = "member", "Member"
+        VIEWER = "viewer", "Viewer"  # customer: sees results, cannot change anything
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="memberships")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memberships")

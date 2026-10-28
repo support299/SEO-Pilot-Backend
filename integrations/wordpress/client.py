@@ -11,6 +11,7 @@ response size/timeout limits, and REST API auto-discovery via the site's own
 
 from __future__ import annotations
 
+import html
 import ipaddress
 import socket
 from dataclasses import dataclass
@@ -28,7 +29,8 @@ MAX_RESPONSE_BYTES = 1_000_000
 # 100KB+ per page) — together that made the 100-item list slow and over the size cap.
 # The list view needs no meta; a single-object fetch does (current meta description).
 WP_LIST_FIELDS = "id,title,slug,status,link,modified_gmt"
-WP_OBJECT_FIELDS = WP_LIST_FIELDS + ",meta"
+# `aioseo_meta_data` is only present when All in One SEO is installed; WordPress ignores unknown _fields.
+WP_OBJECT_FIELDS = WP_LIST_FIELDS + ",meta,aioseo_meta_data"
 
 
 class WordPressError(Exception):
@@ -203,28 +205,71 @@ def fetch_object(api_url: str, object_type: str, object_id: int, username: str, 
 
 def update_object(api_url: str, object_type: str, object_id: int, changes: dict, username: str, application_password: str) -> WpObject:
     """
-    `changes` may contain `title` and/or `meta_description`. The meta
-    description is written to both Yoast's and RankMath's known field names
-    unconditionally — neither plugin minds an unknown meta key existing, so
-    this avoids needing to detect which (if either) is actually installed,
-    same pragmatic approach the old app used.
+    `changes` may contain `title` and/or `meta_description`. Where they go
+    depends on the SEO plugin:
+
+    - All in One SEO keeps both in its own table, not post meta, so they're
+      written through AIOSEO's `aioseo_meta_data` field, falling back to AIOSEO's
+      own `/aioseo/v1/post` endpoint if that field isn't writable on the site.
+      The title here is the SEO title (the `<title>` tag), NOT the WordPress
+      page title — themes reuse that one for menu labels, so editing it would
+      rename navigation items.
+    - Without AIOSEO, `title` is the WordPress page title, and the meta
+      description goes to Yoast's and Rank Math's known post-meta names
+      unconditionally — neither plugin minds an unknown meta key existing.
+
+    Callers re-read the object afterwards and fail the change if the value
+    didn't actually land, so a write that a plugin ignores is never reported
+    as published.
     """
     endpoint = "pages" if object_type == "page" else "posts"
+    route = f"/wp/v2/{endpoint}/{object_id}"
+    auth = {"username": username, "application_password": application_password}
+    wants_title = changes.get("title") is not None
+    wants_description = changes.get("meta_description") is not None
+    aioseo = _fetch_aioseo_data(api_url, route, auth) if wants_title or wants_description else None
+
     body: dict = {}
-    if "title" in changes and changes["title"]:
-        body["title"] = changes["title"]
-    if "meta_description" in changes and changes["meta_description"]:
-        body["meta"] = {
-            "rank_math_description": changes["meta_description"],
-            "_yoast_wpseo_metadesc": changes["meta_description"],
-        }
-    payload = wp_fetch_json(api_url, f"/wp/v2/{endpoint}/{object_id}", username=username, application_password=application_password, method="POST", body=body)
+    if aioseo is not None:
+        # Empty strings are valid here: rolling back to "no value" must clear the field.
+        wanted = {key: changes[source] for key, source in (("title", "title"), ("description", "meta_description")) if changes.get(source) is not None}
+        body["aioseo_meta_data"] = wanted
+    else:
+        if changes.get("title"):
+            body["title"] = changes["title"]
+        if wants_description:
+            body["meta"] = {
+                "rank_math_description": changes["meta_description"],
+                "_yoast_wpseo_metadesc": changes["meta_description"],
+            }
+    payload = wp_fetch_json(api_url, route, method="POST", body=body, **auth)
+
+    if aioseo is not None:
+        wanted = body["aioseo_meta_data"]
+        current = _fetch_aioseo_data(api_url, route, auth) or {}
+        if any(html.unescape(current.get(key) or "").strip() != value.strip() for key, value in wanted.items()):
+            # Fields weren't writable through the core endpoint — use AIOSEO's own, sending
+            # the full existing record so no other AIOSEO setting is reset.
+            wp_fetch_json(api_url, "/aioseo/v1/post", method="POST", body={**current, "id": object_id, **wanted}, **auth)
     return _to_wp_object(payload)
+
+
+def _fetch_aioseo_data(api_url: str, route: str, auth: dict) -> dict | None:
+    """AIOSEO's per-post SEO settings, or None if the site doesn't run All in One SEO."""
+    payload = wp_fetch_json(api_url, f"{route}?context=edit&_fields=aioseo_meta_data", **auth)
+    data = payload.get("aioseo_meta_data") if isinstance(payload, dict) else None
+    return data if isinstance(data, dict) else None
 
 
 def _to_wp_object(payload: dict) -> WpObject:
     title = payload.get("title", {})
     meta = payload.get("meta") or {}
+    meta = dict(meta) if isinstance(meta, dict) else {}
+    aioseo = payload.get("aioseo_meta_data")
+    if isinstance(aioseo, dict):
+        # AIOSEO HTML-escapes stored values (e.g. "&amp;"); compare on the plain text.
+        meta["_aioseo_title"] = html.unescape(aioseo.get("title") or "")
+        meta["_aioseo_description"] = html.unescape(aioseo.get("description") or "")
     return WpObject(
         id=payload.get("id"),
         title=title.get("raw") or title.get("rendered") or "" if isinstance(title, dict) else str(title or ""),
@@ -232,5 +277,5 @@ def _to_wp_object(payload: dict) -> WpObject:
         status=payload.get("status") or "unknown",
         link=payload.get("link"),
         modified_gmt=payload.get("modified_gmt"),
-        meta=meta if isinstance(meta, dict) else {},
+        meta=meta,
     )

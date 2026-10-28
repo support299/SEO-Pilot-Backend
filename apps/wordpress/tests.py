@@ -213,6 +213,13 @@ class TestChangePacketLifecycle:
 
         # Now applying should succeed since current_revision matches the live page.
         monkeypatch.setattr("apps.wordpress.services.wp.update_object", lambda *a, **kw: _object(title="X", modified_gmt="2026-02-01T00:00:00"))
+        calls = {"n": 0}
+
+        def fetch_then_show_update(*a, **kw):
+            calls["n"] += 1
+            return _object(title="X" if calls["n"] > 1 else "Old", modified_gmt="2026-02-01T00:00:00")
+
+        monkeypatch.setattr("apps.wordpress.services.wp.fetch_object", fetch_then_show_update)
         applied = services.apply_change_packet(reapproved)
         assert applied.status == ChangePacket.Status.APPLIED
 
@@ -262,3 +269,34 @@ class TestChangePacketLifecycle:
 
         packet.refresh_from_db()
         assert packet.status == ChangePacket.Status.ROLLBACK_BLOCKED
+
+
+    def test_apply_fails_when_wordpress_silently_ignores_the_change(self, monkeypatch, client):
+        access, business = _register_and_login(client, "wp-ignored@example.com")
+        _connect(business)
+
+        monkeypatch.setattr("apps.wordpress.services.wp.fetch_object", lambda *a, **kw: _object(title="Old Title"))
+        packet = services.prepare_change_packet(business, user=None, target_object_type="page", target_object_id=5, proposed_changes={"title": "New Title"})
+        packet.status = ChangePacket.Status.APPROVED
+        packet.save()
+        monkeypatch.setattr("apps.wordpress.services.wp.update_object", lambda *a, **kw: _object(title="Old Title"))
+
+        with pytest.raises(services.WordPressIntegrationError):
+            services.apply_change_packet(packet)
+        packet.refresh_from_db()
+        assert packet.status == ChangePacket.Status.FAILED
+
+
+class TestSnapshot:
+    def test_aioseo_site_snapshots_the_seo_title_not_the_page_title(self):
+        obj = _object(title="Blog", meta={"_aioseo_title": "Service Business CRM Tips | Blog", "_aioseo_description": "Desc"})
+
+        assert services._snapshot(obj) == {"title": "Service Business CRM Tips | Blog", "meta_description": "Desc"}
+
+    def test_empty_aioseo_title_stays_empty_instead_of_falling_back_to_page_title(self):
+        obj = _object(title="Blog", meta={"_aioseo_title": ""})
+
+        assert services._snapshot(obj)["title"] == ""
+
+    def test_site_without_aioseo_uses_page_title(self):
+        assert services._snapshot(_object(title="Blog", meta={"rank_math_description": "D"})) == {"title": "Blog", "meta_description": "D"}

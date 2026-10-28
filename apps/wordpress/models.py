@@ -70,6 +70,10 @@ class ChangePacket(models.Model):
     before_snapshot = models.JSONField(null=True, blank=True)
     after_snapshot = models.JSONField(null=True, blank=True)
 
+    # Who/what proposed it: "manual" (a person in the UI) or "agent" (an AI agent through the agent API).
+    source = models.CharField(max_length=20, default="manual")
+    agent_name = models.CharField(max_length=100, blank=True)
+
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     approved_at = models.DateTimeField(null=True, blank=True)

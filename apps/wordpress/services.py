@@ -96,7 +96,7 @@ def list_inventory(business: Business, object_type: str) -> list[dict]:
 # --- Change packets ------------------------------------------------------------
 
 
-def prepare_change_packet(business: Business, *, user, target_object_type: str, target_object_id: int, proposed_changes: dict, reason: str = "") -> ChangePacket:
+def prepare_change_packet(business: Business, *, user, target_object_type: str, target_object_id: int, proposed_changes: dict, reason: str = "", source: str = "manual", agent_name: str = "") -> ChangePacket:
     if not proposed_changes.get("title") and not proposed_changes.get("meta_description"):
         raise WordPressIntegrationError("Propose at least a title or a meta description change.")
 
@@ -116,13 +116,20 @@ def prepare_change_packet(business: Business, *, user, target_object_type: str, 
         reason=reason,
         current_revision=current.modified_gmt or "",
         created_by=user,
+        source=source,
+        agent_name=agent_name,
     )
+    if source == "agent":
+        # Attribute it to the agent, not to the admin whose key it used.
+        summary, actor = f"AI agent \"{agent_name}\" proposed a change to \"{current.title}\".", None
+    else:
+        summary, actor = f"Proposed a change to \"{current.title}\".", user
     record_event(
         business,
         "wordpress.change_proposed",
-        f"Proposed a change to \"{current.title}\".",
-        actor=user,
-        metadata={"packet_id": packet.id, "fields": list(proposed_changes.keys())},
+        summary,
+        actor=actor,
+        metadata={"packet_id": packet.id, "fields": list(proposed_changes.keys()), "source": source},
     )
     return packet
 
@@ -196,13 +203,29 @@ def apply_change_packet(packet: ChangePacket) -> ChangePacket:
         _fail(packet, str(exc))
         raise WordPressIntegrationError(str(exc)) from exc
 
+    after_snapshot = _snapshot(after)
+    not_saved = [
+        label
+        for key, label in (("title", "title"), ("meta_description", "meta description"))
+        if proposed_value_missing(packet.proposed_changes, after_snapshot, key)
+    ]
+    if not_saved:
+        message = f"WordPress accepted the update but the {' and '.join(not_saved)} did not change on the page. The site needs a supported SEO plugin (All in One SEO, Yoast or Rank Math) that allows editing it from outside."
+        _fail(packet, message)
+        raise WordPressIntegrationError(message)
+
     packet.status = ChangePacket.Status.APPLIED
-    packet.after_snapshot = _snapshot(after)
+    packet.after_snapshot = after_snapshot
     packet.applied_at = timezone.now()
     packet.last_error = ""
     packet.save(update_fields=["status", "after_snapshot", "applied_at", "last_error", "updated_at"])
     record_event(packet.business, "wordpress.change_applied", f"Published a change to \"{after.title}\".", metadata={"packet_id": packet.id, "fields": list(packet.proposed_changes.keys())})
     return packet
+
+
+def proposed_value_missing(proposed: dict, snapshot: dict, key: str) -> bool:
+    wanted = proposed.get(key)
+    return bool(wanted) and (snapshot.get(key) or "").strip() != wanted.strip()
 
 
 def rollback_change_packet(packet: ChangePacket) -> ChangePacket:
@@ -249,7 +272,9 @@ def _fail(packet: ChangePacket, message: str) -> None:
 
 
 def _snapshot(obj: wp.WpObject) -> dict:
-    return {"title": obj.title, "meta_description": obj.meta.get("rank_math_description") or obj.meta.get("_yoast_wpseo_metadesc") or ""}
+    # On AIOSEO sites the title we manage is the SEO title, not the WordPress page title.
+    title = obj.meta["_aioseo_title"] if "_aioseo_title" in obj.meta else obj.title
+    return {"title": title, "meta_description": obj.meta.get("_aioseo_description") or obj.meta.get("rank_math_description") or obj.meta.get("_yoast_wpseo_metadesc") or ""}
 
 
 def _serialize_wp_object(obj: wp.WpObject, object_type: str) -> dict:
@@ -271,6 +296,8 @@ def serialize_packet(packet: ChangePacket) -> dict:
         "target_url": packet.target_url,
         "proposed_changes": packet.proposed_changes,
         "reason": packet.reason,
+        "source": packet.source,
+        "agent_name": packet.agent_name,
         "status": packet.status,
         "before_snapshot": packet.before_snapshot,
         "after_snapshot": packet.after_snapshot,

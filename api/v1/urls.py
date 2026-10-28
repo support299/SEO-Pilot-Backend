@@ -15,4 +15,6 @@ urlpatterns = [
     path("", include("apps.approvals.urls")),
     path("", include("apps.history.urls")),
     path("", include("apps.wordpress.urls")),
+    path("", include("apps.local_visibility.urls")),
+    path("agent/", include("apps.agent.urls")),
 ]

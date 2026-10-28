@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     "apps.approvals",
     "apps.history",
     "apps.wordpress",
+    "apps.agent",
+    "apps.local_visibility",
 ]
 
 MIDDLEWARE = [
@@ -102,6 +104,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
+        "common.permissions.DenyViewerWrites",
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
@@ -112,6 +115,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "auth": "20/minute",
         "sync": "6/minute",
+        "agent": "120/minute",
     },
 }
 
@@ -129,6 +133,14 @@ SIMPLE_JWT = {
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
 GOOGLE_OAUTH_CLIENT_SECRET = config("GOOGLE_OAUTH_CLIENT_SECRET", default="")
 SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY = config("SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY", default="")
+# Safety cap on how many changes AI agents may propose per business per rolling 24h.
+# DataForSEO powers geo-grid rank tracking (Local Visibility). Every scan costs money, hence the caps.
+DATAFORSEO_API_LOGIN = config("DATAFORSEO_API_LOGIN", default="")
+DATAFORSEO_API_PASSWORD = config("DATAFORSEO_API_PASSWORD", default="")
+LOCAL_VISIBILITY_MAX_KEYWORDS_PER_BUSINESS = config("LOCAL_VISIBILITY_MAX_KEYWORDS_PER_BUSINESS", default=10, cast=int)
+LOCAL_VISIBILITY_MAX_SCANS_PER_BUSINESS_PER_DAY = config("LOCAL_VISIBILITY_MAX_SCANS_PER_BUSINESS_PER_DAY", default=20, cast=int)
+LOCAL_VISIBILITY_AUTO_SCAN = config("LOCAL_VISIBILITY_AUTO_SCAN", default=False, cast=bool)
+AGENT_MAX_PROPOSALS_PER_BUSINESS_PER_DAY = config("AGENT_MAX_PROPOSALS_PER_BUSINESS_PER_DAY", default=25, cast=int)
 WORDPRESS_CREDENTIAL_ENCRYPTION_KEY = config("WORDPRESS_CREDENTIAL_ENCRYPTION_KEY", default="")
 SEARCH_CONSOLE_OAUTH_STATE_SECRET = config("SEARCH_CONSOLE_OAUTH_STATE_SECRET", default="")
 # Where the frontend lives — OAuth callback redirects the browser here when done.
@@ -154,6 +166,10 @@ CELERY_BEAT_SCHEDULE = {
     "sync-all-analytics-connections-daily": {
         "task": "apps.analytics.tasks.sync_all_analytics_connections",
         "schedule": 60 * 60 * 24,
+    },
+    "refresh-local-visibility-weekly": {
+        "task": "apps.local_visibility.tasks.scan_all_tracked_keywords",
+        "schedule": 60 * 60 * 24 * 7,  # a no-op unless LOCAL_VISIBILITY_AUTO_SCAN is on
     },
 }
 
