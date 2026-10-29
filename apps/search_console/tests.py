@@ -121,6 +121,10 @@ class TestCrypto:
         assert payload.business_id == "biz-1"
         assert payload.user_id == "user-1"
 
+    def test_popup_flag_round_trips_and_defaults_off(self):
+        assert google_crypto.verify_oauth_state(google_crypto.sign_oauth_state("b", "u", "k", popup=True), "k").popup is True
+        assert google_crypto.verify_oauth_state(google_crypto.sign_oauth_state("b", "u", "k"), "k").popup is False
+
     def test_tampered_state_is_rejected(self):
         state = google_crypto.sign_oauth_state("biz-1", "user-1", "test-state-secret")
         with pytest.raises(google_crypto.InvalidOAuthState):
@@ -255,3 +259,19 @@ class TestSearchConsoleEndpoints:
         response = client.get(reverse("search_console:authorize-url", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}")
 
         assert response.status_code == 503
+
+
+class TestPopupCallback:
+    def test_popup_login_ends_on_a_close_window_page_not_a_redirect(self, client, settings):
+        settings.SEARCH_CONSOLE_OAUTH_STATE_SECRET = "test-state-secret"
+        state = google_crypto.sign_oauth_state("1", "1", "test-state-secret", popup=True)
+
+        response = client.get(reverse("search_console:callback"), {"error": "access_denied", "state": state})
+
+        assert response.status_code == 200
+        assert b"window.close()" in response.content
+        assert b"Google was not connected" in response.content
+
+    def test_normal_login_still_redirects_to_the_app(self, client):
+        response = client.get(reverse("search_console:callback"), {"error": "access_denied"})
+        assert response.status_code == 302

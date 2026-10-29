@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from apps.history.services import record_event
 from common.permissions import get_business_or_404
 from integrations.google import crypto as google_crypto
+from integrations.google.popup import popup_result_page
 from integrations.google.search_console import GoogleApiError
 
 from . import services
@@ -51,7 +52,7 @@ class AuthorizeUrlView(APIView):
         redirect_uri = request.build_absolute_uri(reverse("search_console:callback"))
 
         try:
-            url = services.build_authorization_url(business_id=str(business.id), user_id=str(request.user.id), redirect_uri=redirect_uri)
+            url = services.build_authorization_url(business_id=str(business.id), user_id=str(request.user.id), redirect_uri=redirect_uri, popup=request.query_params.get("popup") == "1")
         except services.SearchConsoleError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
@@ -74,9 +75,10 @@ class CallbackView(APIView):
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         denied = request.query_params.get("error")
+        popup = _popup_from_state(state)
 
         if denied:
-            return self._redirect_to_frontend(business_id=None, params={"scError": "denied"})
+            return self._finish(popup, business_id=None, params={"scError": "denied"})
 
         try:
             if not code or not state:
@@ -94,11 +96,13 @@ class CallbackView(APIView):
             record_event(business, "search_console.connected", f"Connected Google Search Console ({connection.site_url.replace('sc-domain:', '')}).", actor=user)
             _enqueue_sync(business.id)
 
-            return self._redirect_to_frontend(business_id=business.id, params={"scConnected": "1"})
+            return self._finish(popup, business_id=business.id, params={"scConnected": "1"})
         except (services.SearchConsoleError, GoogleApiError, google_crypto.InvalidOAuthState):
-            return self._redirect_to_frontend(business_id=None, params={"scError": "connection_failed"})
+            return self._finish(popup, business_id=None, params={"scError": "connection_failed"})
 
-    def _redirect_to_frontend(self, *, business_id, params: dict) -> HttpResponseRedirect:
+    def _finish(self, popup: bool, *, business_id, params: dict):
+        if popup:
+            return popup_result_page(ok="scConnected" in params)
         path = f"/businesses/{business_id}/performance" if business_id else "/"
         return HttpResponseRedirect(f"{settings.FRONTEND_URL}{path}?{urlencode(params)}")
 
@@ -182,3 +186,13 @@ class TopPagesView(APIView):
         business = get_business_or_404(request.user, business_id)
         pages = SearchConsoleTopPage.objects.filter(business=business)[:10]
         return Response(TopPageSerializer(pages, many=True).data)
+
+
+def _popup_from_state(state: str | None) -> bool:
+    """Whether the login ran in a popup; an unreadable state just means the normal full-page flow."""
+    if not state:
+        return False
+    try:
+        return services.read_oauth_state(state).popup
+    except Exception:
+        return False

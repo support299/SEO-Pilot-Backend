@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from apps.history.services import record_event
 from common.permissions import get_business_or_404
 from integrations.google import crypto as google_crypto
+from integrations.google.popup import popup_result_page
 from integrations.google.analytics import GoogleApiError
 
 from . import services
@@ -39,7 +40,7 @@ class AuthorizeUrlView(APIView):
         business = get_business_or_404(request.user, business_id)
         redirect_uri = request.build_absolute_uri(reverse("analytics:callback"))
         try:
-            url = services.build_authorization_url(business_id=str(business.id), user_id=str(request.user.id), redirect_uri=redirect_uri)
+            url = services.build_authorization_url(business_id=str(business.id), user_id=str(request.user.id), redirect_uri=redirect_uri, popup=request.query_params.get("popup") == "1")
         except services.AnalyticsError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"url": url})
@@ -52,10 +53,11 @@ class CallbackView(APIView):
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         denied = request.query_params.get("error")
+        popup = _popup_from_state(state)
         business_id = None
 
         if denied:
-            return self._redirect_to_frontend(business_id=None, params={"gaError": "denied"})
+            return self._finish(popup, business_id=None, params={"gaError": "denied"})
 
         try:
             if not code or not state:
@@ -73,15 +75,17 @@ class CallbackView(APIView):
             connection = services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
             record_event(business, "analytics.connected", f"Connected Google Analytics ({connection.property_name}).", actor=user)
             _enqueue_sync(business.id)
-            return self._redirect_to_frontend(business_id=business.id, params={"gaConnected": "1"})
+            return self._finish(popup, business_id=business.id, params={"gaConnected": "1"})
         except services.AnalyticsError as exc:
             logger.warning("Analytics connection failed: %s", exc)
-            return self._redirect_to_frontend(business_id=business_id, params=_error_params(exc.code, str(exc)))
+            return self._finish(popup, business_id=business_id, params=_error_params(exc.code, str(exc)))
         except (GoogleApiError, google_crypto.InvalidOAuthState) as exc:
             logger.warning("Analytics connection failed: %s", exc)
-            return self._redirect_to_frontend(business_id=business_id, params=_error_params("connection_failed", str(exc)))
+            return self._finish(popup, business_id=business_id, params=_error_params("connection_failed", str(exc)))
 
-    def _redirect_to_frontend(self, *, business_id, params: dict) -> HttpResponseRedirect:
+    def _finish(self, popup: bool, *, business_id, params: dict):
+        if popup:
+            return popup_result_page(ok="gaConnected" in params)
         path = f"/businesses/{business_id}/connections" if business_id else "/"
         return HttpResponseRedirect(f"{settings.FRONTEND_URL}{path}?{urlencode(params)}")
 
@@ -157,3 +161,13 @@ class OverviewView(APIView):
                 "comparison": result["comparison"],
             }
         )
+
+
+def _popup_from_state(state: str | None) -> bool:
+    """Whether the login ran in a popup; an unreadable state just means the normal full-page flow."""
+    if not state:
+        return False
+    try:
+        return services.read_oauth_state(state).popup
+    except Exception:
+        return False

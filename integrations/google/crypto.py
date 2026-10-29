@@ -48,9 +48,10 @@ class OAuthStatePayload:
     issued_at: float
     nonce: str
     redirect_uri: str | None = None
+    popup: bool = False  # the login ran in a popup (e.g. inside a GoHighLevel iframe)
 
 
-def sign_oauth_state(business_id: str, user_id: str, secret: str, redirect_uri: str | None = None) -> str:
+def sign_oauth_state(business_id: str, user_id: str, secret: str, redirect_uri: str | None = None, popup: bool = False) -> str:
     payload = {
         "business_id": business_id,
         "user_id": user_id,
@@ -59,6 +60,8 @@ def sign_oauth_state(business_id: str, user_id: str, secret: str, redirect_uri: 
     }
     if redirect_uri:
         payload["redirect_uri"] = redirect_uri
+    if popup:
+        payload["popup"] = True
     body = _b64url_encode(json.dumps(payload).encode("utf-8"))
     signature = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url_encode(signature)}"
@@ -88,4 +91,5 @@ def verify_oauth_state(state: str, secret: str) -> OAuthStatePayload:
         issued_at=payload["issued_at"],
         nonce=payload["nonce"],
         redirect_uri=payload.get("redirect_uri"),
+        popup=bool(payload.get("popup")),
     )

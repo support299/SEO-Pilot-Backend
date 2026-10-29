@@ -48,8 +48,8 @@ def _token_encryption_secret() -> str:
     return settings.SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY
 
 
-def build_authorization_url(*, business_id: str, user_id: str, redirect_uri: str) -> str:
-    state = google_crypto.sign_oauth_state(business_id, user_id, _state_secret(), redirect_uri=redirect_uri)
+def build_authorization_url(*, business_id: str, user_id: str, redirect_uri: str, popup: bool = False) -> str:
+    state = google_crypto.sign_oauth_state(business_id, user_id, _state_secret(), redirect_uri=redirect_uri, popup=popup)
     return ga_api.build_authorization_url(client_id=_client_id(), redirect_uri=redirect_uri, state=state)
 
 
