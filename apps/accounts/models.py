@@ -1,3 +1,6 @@
+import hashlib
+import secrets
+
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
@@ -56,3 +59,37 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+
+class SsoLink(models.Model):
+    """
+    Lets a GoHighLevel sub-account's custom menu link sign a user in without a password. The link carries
+    the GHL location id AND a long random secret; both must match. Only a SHA-256 hash of the secret is
+    stored, and it is shown once when issued. Revoke it any time to cut access.
+    """
+
+    name = models.CharField(max_length=100)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sso_links")
+    location_id = models.CharField(max_length=64)
+    secret_hash = models.CharField(max_length=64, unique=True)
+    secret_hint = models.CharField(max_length=12)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "accounts_sso_link"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.name} (…{self.secret_hint})"
+
+    @staticmethod
+    def hash_secret(raw_secret: str) -> str:
+        return hashlib.sha256(raw_secret.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def issue(cls, *, name: str, user, location_id: str) -> tuple["SsoLink", str]:
+        raw_secret = secrets.token_urlsafe(32)
+        link = cls.objects.create(name=name, user=user, location_id=location_id, secret_hash=cls.hash_secret(raw_secret), secret_hint=raw_secret[-6:])
+        return link, raw_secret

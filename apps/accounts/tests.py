@@ -99,3 +99,55 @@ class TestLogout:
         # The refresh cookie set at registration should now be rejected.
         refresh_response = client.post(reverse("accounts:refresh"))
         assert refresh_response.status_code == 401
+
+
+class TestSsoLogin:
+    def _link(self, location_id="loc123", **user_kwargs):
+        from django.contrib.auth import get_user_model
+
+        from .models import SsoLink
+
+        user = get_user_model().objects.create_user(email="sso@agency.com", password="SuperSecret123!", is_agency_admin=True, **user_kwargs)
+        return SsoLink.issue(name="ghl", user=user, location_id=location_id)
+
+    def _sso(self, client, location_id, token):
+        return client.post(reverse("accounts:sso"), {"location_id": location_id, "token": token}, format="json")
+
+    def test_valid_link_signs_in(self, client):
+        _link, secret = self._link()
+        response = self._sso(client, "loc123", secret)
+
+        assert response.status_code == 200
+        assert response.data["user"]["email"] == "sso@agency.com"
+        assert response.cookies["refresh_token"]["httponly"] is True
+        _link.refresh_from_db()
+        assert _link.last_used_at is not None
+
+    def test_location_id_alone_is_not_enough(self, client):
+        self._link()
+        assert self._sso(client, "loc123", "").status_code == 401
+        assert self._sso(client, "loc123", "guess").status_code == 401
+
+    def test_wrong_location_is_rejected(self, client):
+        _link, secret = self._link()
+        assert self._sso(client, "another-location", secret).status_code == 401
+
+    def test_revoked_link_is_rejected(self, client):
+        from django.utils import timezone
+
+        link, secret = self._link()
+        link.revoked_at = timezone.now()
+        link.save()
+        assert self._sso(client, "loc123", secret).status_code == 401
+
+    def test_inactive_user_is_rejected(self, client):
+        link, secret = self._link()
+        link.user.is_active = False
+        link.user.save()
+        assert self._sso(client, "loc123", secret).status_code == 401
+
+    def test_the_secret_is_never_stored(self):
+        from .models import SsoLink
+
+        _link, secret = self._link()
+        assert secret not in SsoLink.objects.get().secret_hash

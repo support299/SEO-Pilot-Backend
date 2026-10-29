@@ -1,4 +1,8 @@
+import logging
+import secrets
+
 from django.contrib.auth import authenticate, get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -10,9 +14,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.businesses.models import Account
 from common.jwt_cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 
+from .models import SsoLink
 from .serializers import MeSerializer, RegisterSerializer, UserSerializer
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _issue_tokens(user) -> tuple[str, str]:
@@ -51,6 +57,34 @@ class LoginView(APIView):
 
         access, refresh = _issue_tokens(user)
         response = Response({"access": access, "user": UserSerializer(user).data})
+        set_refresh_cookie(response, refresh)
+        return response
+
+
+class SsoLoginView(APIView):
+    """Signs in from a GoHighLevel custom menu link: needs the sub-account's location id AND the link's secret."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+
+    def post(self, request):
+        location_id = str(request.data.get("location_id") or "")
+        secret = str(request.data.get("token") or "")
+        rejected = Response({"detail": "This sign-in link is not valid."}, status=status.HTTP_401_UNAUTHORIZED)
+        if not location_id or not secret:
+            return rejected
+
+        link = SsoLink.objects.select_related("user").filter(secret_hash=SsoLink.hash_secret(secret), revoked_at__isnull=True).first()
+        if link is None or not secrets.compare_digest(link.location_id, location_id) or not link.user.is_active:
+            logger.warning("Rejected SSO sign-in for location %s", location_id[:64])
+            return rejected
+
+        link.last_used_at = timezone.now()
+        link.save(update_fields=["last_used_at"])
+
+        access, refresh = _issue_tokens(link.user)
+        response = Response({"access": access, "user": UserSerializer(link.user).data})
         set_refresh_cookie(response, refresh)
         return response
 
