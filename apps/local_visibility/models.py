@@ -20,6 +20,10 @@ class LocalVisibilityProfile(models.Model):
     class Meta:
         db_table = "local_visibility_profile"
 
+    @property
+    def radius_miles(self) -> float:
+        return round(self.radius_km / 1.609344, 2)
+
 
 class TrackedKeyword(models.Model):
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="tracked_keywords")
@@ -60,6 +64,10 @@ class GridScan(models.Model):
     class Meta:
         db_table = "local_visibility_scan"
         ordering = ["-created_at"]
+
+    @property
+    def radius_miles(self) -> float:
+        return round(self.radius_km / 1.609344, 2)
 
 
 class GridPoint(models.Model):

@@ -11,6 +11,7 @@ class Account(models.Model):
     """
 
     name = models.CharField(max_length=200)
+    is_paused = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,6 +49,7 @@ class Business(models.Model):
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="businesses")
     name = models.CharField(max_length=200)
     website = models.URLField(blank=True, null=True)
+    is_paused = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -57,3 +59,7 @@ class Business(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def is_effective_paused(self) -> bool:
+        return bool(self.is_paused or self.account.is_paused)

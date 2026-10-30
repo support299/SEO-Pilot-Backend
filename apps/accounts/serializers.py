@@ -47,7 +47,7 @@ class AccountSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Account
-        fields = ["id", "name", "role", "created_at"]
+        fields = ["id", "name", "is_paused", "role", "created_at"]
         read_only_fields = fields
 
     def get_role(self, obj: Account) -> str | None:

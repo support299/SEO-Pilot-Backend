@@ -24,5 +24,8 @@ def sync_all_search_console_connections() -> None:
     """Scheduled (Celery Beat) daily sync for every connected business — see config/settings/base.py CELERY_BEAT_SCHEDULE."""
     from .models import SearchConsoleConnection
 
-    for connection_id in SearchConsoleConnection.objects.values_list("business_id", flat=True):
+    for connection_id in SearchConsoleConnection.objects.filter(
+        business__is_paused=False,
+        business__account__is_paused=False,
+    ).values_list("business_id", flat=True):
         sync_business_search_console.delay(connection_id)

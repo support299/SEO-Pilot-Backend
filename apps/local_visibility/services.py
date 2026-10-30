@@ -17,10 +17,12 @@ from .models import GridPoint, GridScan, LocalVisibilityProfile, TrackedKeyword
 logger = logging.getLogger("django")
 
 KM_PER_DEGREE_LAT = 111.32
+KM_PER_MILE = 1.609344
 MAX_DEPTH = 20  # we look at the first 20 Maps results per point; beyond that counts as "not ranking"
 MAX_PARALLEL_CHECKS = 5
 ALLOWED_GRID_SIZES = (3, 5, 7)
 MAX_RADIUS_KM = 50
+MAX_RADIUS_MILES = 35.0
 QUEUED_TIMEOUT = timedelta(minutes=5)  # a queued scan nobody picked up: the worker was down or didn't know the task
 RUNNING_TIMEOUT = timedelta(minutes=10)
 
@@ -112,13 +114,31 @@ def summarize_ranks(ranks: list[int | None]) -> dict:
 # --- Setup -------------------------------------------------------------------
 
 
-def save_profile(business: Business, *, latitude: float, longitude: float, grid_size: int, radius_km: float, business_domain: str = "", place_id: str = "") -> LocalVisibilityProfile:
+def save_profile(
+    business: Business,
+    *,
+    latitude: float,
+    longitude: float,
+    grid_size: int,
+    radius_miles: float | None = None,
+    radius_km: float | None = None,
+    business_domain: str = "",
+    place_id: str = "",
+) -> LocalVisibilityProfile:
     if grid_size not in ALLOWED_GRID_SIZES:
         raise LocalVisibilityError(f"Grid size must be one of {', '.join(f'{n}x{n}' for n in ALLOWED_GRID_SIZES)}.")
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         raise LocalVisibilityError("Those coordinates are not a valid location.")
-    if not (0.5 <= radius_km <= MAX_RADIUS_KM):
-        raise LocalVisibilityError(f"The radius must be between 0.5 and {MAX_RADIUS_KM} km.")
+    if radius_miles is not None:
+        if not (0.25 <= radius_miles <= MAX_RADIUS_MILES):
+            raise LocalVisibilityError(f"The reach must be between 0.25 and {int(MAX_RADIUS_MILES)} miles.")
+        radius_km = round(radius_miles * KM_PER_MILE, 4)
+    elif radius_km is not None:
+        if not (0.5 <= radius_km <= MAX_RADIUS_KM):
+            raise LocalVisibilityError(f"The reach must be between 0.5 and {MAX_RADIUS_KM} km.")
+    else:
+        radius_km = round(5.0 * KM_PER_MILE, 4)
+
     profile, _ = LocalVisibilityProfile.objects.update_or_create(
         business=business,
         defaults={
@@ -270,7 +290,11 @@ def _fail_scan(scan: GridScan, message: str, cost: Decimal = Decimal("0")) -> No
 def scan_all_businesses() -> int:
     """Used by the optional weekly schedule. Respects the same daily caps as a manual scan."""
     started = 0
-    for keyword in TrackedKeyword.objects.select_related("business").filter(business__local_visibility_profile__isnull=False):
+    for keyword in TrackedKeyword.objects.select_related("business", "business__account").filter(
+        business__local_visibility_profile__isnull=False,
+        business__is_paused=False,
+        business__account__is_paused=False,
+    ):
         try:
             scan = start_scan(keyword)
         except LocalVisibilityError:
@@ -313,6 +337,7 @@ def serialize_profile(profile: LocalVisibilityProfile | None, business: Business
         "longitude": profile.longitude,
         "grid_size": profile.grid_size,
         "radius_km": profile.radius_km,
+        "radius_miles": profile.radius_miles,
         "business_domain": profile.business_domain,
         "place_id": profile.place_id,
         "matching_domain": our_domain(business, profile),
@@ -414,6 +439,7 @@ def keyword_detail(keyword: TrackedKeyword, *, include_cost: bool = False) -> di
                 **scan_summary(latest, include_cost=include_cost),
                 "grid_size": latest.grid_size,
                 "radius_km": latest.radius_km,
+                "radius_miles": latest.radius_miles,
                 "center_latitude": latest.center_latitude,
                 "center_longitude": latest.center_longitude,
                 "points": points,

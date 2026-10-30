@@ -20,7 +20,8 @@ class ProfileSerializer(serializers.Serializer):
     latitude = serializers.FloatField(min_value=-90, max_value=90)
     longitude = serializers.FloatField(min_value=-180, max_value=180)
     grid_size = serializers.IntegerField(default=5)
-    radius_km = serializers.FloatField(default=5)
+    radius_miles = serializers.FloatField(required=False, allow_null=True, default=None)
+    radius_km = serializers.FloatField(required=False, allow_null=True, default=None)
     business_domain = serializers.CharField(required=False, allow_blank=True, default="")
     place_id = serializers.CharField(required=False, allow_blank=True, default="")
 

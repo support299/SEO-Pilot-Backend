@@ -180,3 +180,21 @@ def test_stuck_scan_is_failed_so_the_keyword_can_be_scanned_again(client, busine
     assert overview["keywords"][0]["scanning"] is False
     assert "didn't finish" in overview["keywords"][0]["last_error"]
     assert client.post(reverse("local_visibility:keyword-scan", args=[business.id, keyword_id])).status_code == 202
+
+
+def test_profile_reach_in_miles(client, business):
+    _login(client, "owner-miles@acme.com", account=business.account, role=Membership.Role.OWNER)
+    response = client.put(
+        reverse("local_visibility:profile", args=[business.id]),
+        {"latitude": 29.76, "longitude": -95.36, "grid_size": 5, "radius_miles": 5},
+        format="json",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["radius_miles"] == 5.0
+    # 5 miles * 1.609344 km/mi = ~8.0467 km
+    assert abs(data["radius_km"] - 8.0467) < 0.01
+
+    overview = client.get(reverse("local_visibility:overview", args=[business.id])).json()
+    assert overview["profile"]["radius_miles"] == 5.0
+

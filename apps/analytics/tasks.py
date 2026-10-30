@@ -22,5 +22,8 @@ def sync_business_analytics(self, business_id: int) -> None:
 def sync_all_analytics_connections() -> None:
     from .models import AnalyticsConnection
 
-    for business_id in AnalyticsConnection.objects.values_list("business_id", flat=True):
+    for business_id in AnalyticsConnection.objects.filter(
+        business__is_paused=False,
+        business__account__is_paused=False,
+    ).values_list("business_id", flat=True):
         sync_business_analytics.delay(business_id)

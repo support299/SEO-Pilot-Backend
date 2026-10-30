@@ -1,4 +1,5 @@
 import pytest
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -251,3 +252,138 @@ class TestClientsWithMultipleWebsites:
         assert second["id"] != acme["business"]["id"]
         history = client.get(reverse("history:list", args=[second["id"]]), HTTP_AUTHORIZATION=admin)
         assert history.status_code == 200
+
+
+class TestPauseAndDeleteAccountsAndBusinesses:
+    def _admin(self, client):
+        _make_admin()
+        return f"Bearer {_login(client, 'boss@agency.com')}"
+
+    def test_admin_can_pause_and_resume_customer(self, client):
+        admin = self._admin(client)
+        created = client.post(
+            reverse("businesses:agency-customers"),
+            {"customer_name": "Pause Test Co"},
+            format="json",
+            HTTP_AUTHORIZATION=admin,
+        ).data
+        account_id = created["account"]["id"]
+
+        # Pause customer
+        response = client.patch(
+            reverse("businesses:agency-customer-detail", args=[account_id]),
+            {"is_paused": True},
+            format="json",
+            HTTP_AUTHORIZATION=admin,
+        )
+        assert response.status_code == 200
+        assert response.data["is_paused"] is True
+        assert response.data["businesses"][0]["effective_paused"] is True
+
+        # Verify in list
+        listed = client.get(reverse("businesses:agency-customers"), HTTP_AUTHORIZATION=admin).data
+        customer = next(c for c in listed if c["id"] == account_id)
+        assert customer["is_paused"] is True
+
+        # Resume customer
+        response = client.patch(
+            reverse("businesses:agency-customer-detail", args=[account_id]),
+            {"is_paused": False},
+            format="json",
+            HTTP_AUTHORIZATION=admin,
+        )
+        assert response.status_code == 200
+        assert response.data["is_paused"] is False
+
+    def test_admin_can_delete_customer_and_cleans_orphan_viewer(self, client):
+        admin = self._admin(client)
+        created = client.post(
+            reverse("businesses:agency-customers"),
+            {"customer_name": "Delete Test Co", "email": "viewer-delete@example.com", "password": "SuperSecret123!"},
+            format="json",
+            HTTP_AUTHORIZATION=admin,
+        ).data
+        account_id = created["account"]["id"]
+        business_id = created["business"]["id"]
+
+        User = get_user_model()
+        assert User.objects.filter(email="viewer-delete@example.com").exists()
+
+        # Delete customer account
+        response = client.delete(
+            reverse("businesses:agency-customer-detail", args=[account_id]),
+            HTTP_AUTHORIZATION=admin,
+        )
+        assert response.status_code == 204
+
+        assert not Account.objects.filter(id=account_id).exists()
+        assert not Business.objects.filter(id=business_id).exists()
+        assert not User.objects.filter(email="viewer-delete@example.com").exists()
+        # Admin is still alive
+        assert User.objects.filter(email="boss@agency.com").exists()
+
+    def test_non_admin_cannot_access_agency_customer_endpoints(self, client):
+        access, account_id = _register_and_login(client, "regular@example.com")
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {access}"}
+
+        assert client.get(reverse("businesses:agency-customer-detail", args=[account_id]), **auth).status_code == 403
+        assert client.patch(reverse("businesses:agency-customer-detail", args=[account_id]), {"is_paused": True}, format="json", **auth).status_code == 403
+        assert client.delete(reverse("businesses:agency-customer-detail", args=[account_id]), **auth).status_code == 403
+
+    def test_pause_and_resume_business(self, client):
+        access, account_id = _register_and_login(client, "bizowner@example.com")
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {access}"}
+        business = Business.objects.create(account_id=account_id, name="Biz Test")
+
+        # Pause business
+        response = client.patch(
+            reverse("businesses:business-detail", args=[business.id]),
+            {"is_paused": True},
+            format="json",
+            **auth,
+        )
+        assert response.status_code == 200
+        assert response.data["is_paused"] is True
+        assert response.data["effective_paused"] is True
+
+        business.refresh_from_db()
+        assert business.is_paused is True
+
+        # Resume business
+        response = client.patch(
+            reverse("businesses:business-detail", args=[business.id]),
+            {"is_paused": False},
+            format="json",
+            **auth,
+        )
+        assert response.status_code == 200
+        assert response.data["is_paused"] is False
+        assert response.data["effective_paused"] is False
+
+    def test_viewer_cannot_pause_or_delete_business(self, client):
+        admin = self._admin(client)
+        created = client.post(
+            reverse("businesses:agency-customers"),
+            {"customer_name": "Viewer Biz Test", "email": "viewerbiz@example.com", "password": "SuperSecret123!"},
+            format="json",
+            HTTP_AUTHORIZATION=admin,
+        ).data
+        business_id = created["business"]["id"]
+
+        viewer_access = f"Bearer {_login(client, 'viewerbiz@example.com')}"
+        v_auth = {"HTTP_AUTHORIZATION": viewer_access}
+
+        # Viewer cannot pause
+        assert client.patch(reverse("businesses:business-detail", args=[business_id]), {"is_paused": True}, format="json", **v_auth).status_code == 403
+        # Viewer cannot delete
+        assert client.delete(reverse("businesses:business-detail", args=[business_id]), **v_auth).status_code == 403
+
+    def test_owner_or_admin_can_delete_business(self, client):
+        access, account_id = _register_and_login(client, "deleter@example.com")
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {access}"}
+        business = Business.objects.create(account_id=account_id, name="To Delete")
+
+        response = client.delete(reverse("businesses:business-detail", args=[business.id]), **auth)
+        assert response.status_code == 204
+        assert not Business.objects.filter(id=business.id).exists()
+

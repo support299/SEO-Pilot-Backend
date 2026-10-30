@@ -76,6 +76,7 @@ class CallbackView(APIView):
         state = request.query_params.get("state")
         denied = request.query_params.get("error")
         popup = _popup_from_state(state)
+        business_id = None
 
         if denied:
             return self._finish(popup, business_id=None, params={"scError": "denied"})
@@ -90,6 +91,7 @@ class CallbackView(APIView):
             except get_user_model().DoesNotExist as exc:
                 raise services.SearchConsoleError("The signed-in user no longer exists.") from exc
             business = get_business_or_404(user, payload.business_id)
+            business_id = business.id
 
             redirect_uri = request.build_absolute_uri(reverse("search_console:callback"))
             connection = services.complete_connection(business=business, code=code, redirect_uri=redirect_uri)
@@ -97,8 +99,12 @@ class CallbackView(APIView):
             _enqueue_sync(business.id)
 
             return self._finish(popup, business_id=business.id, params={"scConnected": "1"})
-        except (services.SearchConsoleError, GoogleApiError, google_crypto.InvalidOAuthState):
-            return self._finish(popup, business_id=None, params={"scError": "connection_failed"})
+        except (services.SearchConsoleError, GoogleApiError, google_crypto.InvalidOAuthState) as exc:
+            logger.warning("Search Console connection failed: %s", exc)
+            params = {"scError": "connection_failed"}
+            if isinstance(exc, services.SearchConsoleError):
+                params["scMessage"] = str(exc)
+            return self._finish(popup, business_id=business_id, params=params)
 
     def _finish(self, popup: bool, *, business_id, params: dict):
         if popup:

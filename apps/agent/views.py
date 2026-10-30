@@ -42,7 +42,14 @@ class BusinessListView(AgentView):
         connected = set(WordPressConnection.objects.values_list("business_id", flat=True))
         return Response(
             [
-                {"id": b.id, "name": b.name, "website": b.website, "customer": b.account.name, "wordpress_connected": b.id in connected}
+                {
+                    "id": b.id,
+                    "name": b.name,
+                    "website": b.website,
+                    "customer": b.account.name,
+                    "wordpress_connected": b.id in connected,
+                    "is_paused": b.is_effective_paused,
+                }
                 for b in businesses
             ]
         )
@@ -104,6 +111,8 @@ class ProposalsView(AgentView):
     def post(self, request, business_id):
         """Queue a change as *awaiting approval*. Nothing reaches the live site until a person approves and applies it."""
         business = get_business_or_404(request.user, business_id)
+        if business.is_effective_paused:
+            return Response({"detail": "This business is paused."}, status=status.HTTP_400_BAD_REQUEST)
 
         object_type = request.data.get("target_object_type")
         if object_type not in (ChangePacket.ObjectType.PAGE, ChangePacket.ObjectType.POST):

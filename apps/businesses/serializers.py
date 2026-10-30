@@ -23,12 +23,26 @@ class WebsiteField(serializers.URLField):
 class BusinessSerializer(serializers.ModelSerializer):
     website = WebsiteField(max_length=200, required=False, allow_blank=True, allow_null=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
+    is_account_paused = serializers.BooleanField(source="account.is_paused", read_only=True)
+    effective_paused = serializers.BooleanField(source="is_effective_paused", read_only=True)
     can_edit = serializers.SerializerMethodField()
 
     class Meta:
         model = Business
-        fields = ["id", "account", "account_name", "name", "website", "can_edit", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "account",
+            "account_name",
+            "name",
+            "website",
+            "is_paused",
+            "is_account_paused",
+            "effective_paused",
+            "can_edit",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "account_name", "is_account_paused", "effective_paused", "created_at", "updated_at"]
 
     def validate_account(self, account):
         request = self.context["request"]
