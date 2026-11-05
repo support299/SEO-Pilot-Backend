@@ -15,9 +15,9 @@ def run_grid_scan(scan_id: int) -> None:
 
 @shared_task
 def scan_all_tracked_keywords() -> None:
-    """Weekly refresh. Off unless LOCAL_VISIBILITY_AUTO_SCAN is set, because every scan costs money."""
+    """Daily check that scans any keyword that is new or a month old. LOCAL_VISIBILITY_AUTO_SCAN=False switches it off, because every scan costs money."""
     if not settings.LOCAL_VISIBILITY_AUTO_SCAN:
         return
     from .services import scan_all_businesses
 
-    logger.info("Weekly local visibility refresh started %s scans", scan_all_businesses())
+    logger.info("Local visibility refresh started %s scans", scan_all_businesses())

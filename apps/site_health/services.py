@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.businesses.models import Business
@@ -65,6 +66,16 @@ def serialize_crawl(crawl: CrawlRun) -> dict:
     }
 
 
+def _prefill_checklist(crawl: CrawlRun) -> None:
+    """Best effort: a checklist problem must never turn a finished crawl into a failed one."""
+    from apps.subscriptions.checklist import apply_crawl_results
+
+    try:
+        apply_crawl_results(crawl)
+    except Exception:
+        logger.exception("Could not pre-fill the checklist from crawl %s", crawl.id)
+
+
 def execute_crawl(crawl_id: int) -> None:
     crawl = CrawlRun.objects.filter(id=crawl_id).first()
     if crawl is None:
@@ -76,7 +87,7 @@ def execute_crawl(crawl_id: int) -> None:
     crawl.save(update_fields=["status", "started_at", "error"])
 
     try:
-        pages = SiteCrawler(crawl.seed_url).crawl()
+        pages = SiteCrawler(crawl.seed_url, limit=settings.SITE_CRAWL_PAGE_LIMIT).crawl()
         findings = build_findings(pages)
         CrawledPage.objects.filter(crawl=crawl).delete()
         Finding.objects.filter(crawl=crawl).delete()
@@ -110,6 +121,7 @@ def execute_crawl(crawl_id: int) -> None:
         crawl.save(update_fields=["status", "score", "pages_crawled", "critical_issues", "finished_at"])
         kind, summary, metadata = crawl_event_fields(crawl, len(findings))
         record_event(crawl.business, kind, summary, metadata=metadata)
+        _prefill_checklist(crawl)
     except Exception as exc:
         logger.exception("Site crawl failed for crawl %s", crawl_id)
         crawl.status = CrawlRun.Status.FAILED

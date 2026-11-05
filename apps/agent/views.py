@@ -15,6 +15,7 @@ from apps.local_visibility.models import TrackedKeyword
 from apps.search_console.models import SearchConsoleTopPage, SearchConsoleTopQuery
 from apps.search_console.serializers import TopPageSerializer, TopQuerySerializer
 from apps.site_health.services import latest_report
+from apps.subscriptions.entitlements import entitlement
 from apps.wordpress import services as wp_services
 from apps.wordpress.models import ChangePacket, WordPressConnection
 from common.permissions import get_business_or_404
@@ -113,6 +114,9 @@ class ProposalsView(AgentView):
         business = get_business_or_404(request.user, business_id)
         if business.is_effective_paused:
             return Response({"detail": "This business is paused."}, status=status.HTTP_400_BAD_REQUEST)
+        plan_access = entitlement(business, "on_page_optimization")
+        if plan_access.reason not in ("ok", "no_subscription"):  # sites created before packages have none and keep working
+            return Response({"detail": "This website's subscription is not active."}, status=status.HTTP_403_FORBIDDEN)
 
         object_type = request.data.get("target_object_type")
         if object_type not in (ChangePacket.ObjectType.PAGE, ChangePacket.ObjectType.POST):

@@ -72,7 +72,7 @@ class TestHistory:
         business = Business.objects.create(account_id=account_id, name="B", website="https://saasyway.com")
 
         class Fake:
-            def __init__(self, seed):
+            def __init__(self, seed, **kwargs):
                 pass
 
             def crawl(self):

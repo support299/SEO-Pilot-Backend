@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "apps.wordpress",
     "apps.agent",
     "apps.local_visibility",
+    "apps.subscriptions",
+    "apps.siteplans",
 ]
 
 MIDDLEWARE = [
@@ -137,10 +139,17 @@ SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY = config("SEARCH_CONSOLE_TOKEN_ENCRYPTION_KE
 # DataForSEO powers geo-grid rank tracking (Local Visibility). Every scan costs money, hence the caps.
 DATAFORSEO_API_LOGIN = config("DATAFORSEO_API_LOGIN", default="")
 DATAFORSEO_API_PASSWORD = config("DATAFORSEO_API_PASSWORD", default="")
+# Google Places lookup: turns a business name/address into grid coordinates.
+GOOGLE_PLACES_API_KEY = config("PLACES_GOOGLE_API_KEY", default="")
 LOCAL_VISIBILITY_MAX_KEYWORDS_PER_BUSINESS = config("LOCAL_VISIBILITY_MAX_KEYWORDS_PER_BUSINESS", default=10, cast=int)
 LOCAL_VISIBILITY_MAX_SCANS_PER_BUSINESS_PER_DAY = config("LOCAL_VISIBILITY_MAX_SCANS_PER_BUSINESS_PER_DAY", default=20, cast=int)
-LOCAL_VISIBILITY_AUTO_SCAN = config("LOCAL_VISIBILITY_AUTO_SCAN", default=False, cast=bool)
+LOCAL_VISIBILITY_AUTO_SCAN = config("LOCAL_VISIBILITY_AUTO_SCAN", default=True, cast=bool)
+# Most pages one crawl fetches. Pages are fetched one at a time, so 500 takes roughly 5-10 minutes in the background worker.
+SITE_CRAWL_PAGE_LIMIT = config("SITE_CRAWL_PAGE_LIMIT", default=500, cast=int)
 AGENT_MAX_PROPOSALS_PER_BUSINESS_PER_DAY = config("AGENT_MAX_PROPOSALS_PER_BUSINESS_PER_DAY", default=25, cast=int)
+AGENT_MAX_CHECKLIST_UPDATES_PER_BUSINESS_PER_DAY = config("AGENT_MAX_CHECKLIST_UPDATES_PER_BUSINESS_PER_DAY", default=200, cast=int)
+AGENT_MAX_PLAN_WRITES_PER_BUSINESS_PER_DAY = config("AGENT_MAX_PLAN_WRITES_PER_BUSINESS_PER_DAY", default=200, cast=int)
+AGENT_MAX_CRAWLS_PER_BUSINESS_PER_DAY = config("AGENT_MAX_CRAWLS_PER_BUSINESS_PER_DAY", default=3, cast=int)
 WORDPRESS_CREDENTIAL_ENCRYPTION_KEY = config("WORDPRESS_CREDENTIAL_ENCRYPTION_KEY", default="")
 SEARCH_CONSOLE_OAUTH_STATE_SECRET = config("SEARCH_CONSOLE_OAUTH_STATE_SECRET", default="")
 # Where the frontend lives — OAuth callback redirects the browser here when done.
@@ -167,9 +176,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.analytics.tasks.sync_all_analytics_connections",
         "schedule": 60 * 60 * 24,
     },
-    "refresh-local-visibility-weekly": {
+    "apply-due-plan-changes-daily": {
+        "task": "apps.subscriptions.tasks.apply_due_plan_changes",
+        "schedule": 60 * 60 * 24,
+    },
+    "refresh-local-visibility-daily": {
         "task": "apps.local_visibility.tasks.scan_all_tracked_keywords",
-        "schedule": 60 * 60 * 24 * 7,  # a no-op unless LOCAL_VISIBILITY_AUTO_SCAN is on
+        "schedule": 60 * 60 * 24,  # only scans keywords that are new or a month old; a no-op if LOCAL_VISIBILITY_AUTO_SCAN is off
     },
 }
 

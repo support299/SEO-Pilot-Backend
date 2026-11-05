@@ -25,6 +25,8 @@ MAX_RADIUS_KM = 50
 MAX_RADIUS_MILES = 35.0
 QUEUED_TIMEOUT = timedelta(minutes=5)  # a queued scan nobody picked up: the worker was down or didn't know the task
 RUNNING_TIMEOUT = timedelta(minutes=10)
+REFRESH_INTERVAL = timedelta(days=30)  # keywords are re-scanned automatically once a month
+FAILED_RETRY_INTERVAL = timedelta(days=1)
 
 
 class LocalVisibilityError(Exception):
@@ -85,8 +87,8 @@ def zoom_for_spacing(size: int, radius_km: float) -> int:
     if spacing <= 3:
         return 15
     if spacing <= 8:
-        return 14
-    return 13
+        return 12
+    return 11
 
 
 def point_score(rank: int | None) -> float:
@@ -287,14 +289,26 @@ def _fail_scan(scan: GridScan, message: str, cost: Decimal = Decimal("0")) -> No
     scan.save(update_fields=["status", "error", "cost_usd", "finished_at"])
 
 
+def keyword_is_due(keyword: TrackedKeyword) -> bool:
+    """Never scanned, or the last good scan is a month old. A failed scan is retried after a day, not every run."""
+    now = timezone.now()
+    if keyword.scans.filter(status__in=[GridScan.Status.QUEUED, GridScan.Status.RUNNING]).exists():
+        return False
+    if keyword.scans.filter(status=GridScan.Status.FAILED, created_at__gte=now - FAILED_RETRY_INTERVAL).exists():
+        return False
+    return not keyword.scans.filter(status=GridScan.Status.COMPLETED, created_at__gte=now - REFRESH_INTERVAL).exists()
+
+
 def scan_all_businesses() -> int:
-    """Used by the optional weekly schedule. Respects the same daily caps as a manual scan."""
+    """Run by the daily schedule; only keywords that are due get scanned. Respects the same daily caps as a manual scan."""
     started = 0
     for keyword in TrackedKeyword.objects.select_related("business", "business__account").filter(
         business__local_visibility_profile__isnull=False,
         business__is_paused=False,
         business__account__is_paused=False,
     ):
+        if not keyword_is_due(keyword):
+            continue
         try:
             scan = start_scan(keyword)
         except LocalVisibilityError:

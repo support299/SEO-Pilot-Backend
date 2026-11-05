@@ -1,13 +1,22 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from common.permissions import accounts_for_user, is_agency_admin
 
+from apps.subscriptions.models import Subscription
+from apps.subscriptions.packages import Package
+
 from .models import Account, Business, Membership
 
 User = get_user_model()
+
+
+def subscription_of(business: Business):
+    """The website's subscription, or None (existing sites created before packages have none)."""
+    return getattr(business, "subscription", None)
 
 
 class WebsiteField(serializers.URLField):
@@ -26,6 +35,9 @@ class BusinessSerializer(serializers.ModelSerializer):
     is_account_paused = serializers.BooleanField(source="account.is_paused", read_only=True)
     effective_paused = serializers.BooleanField(source="is_effective_paused", read_only=True)
     can_edit = serializers.SerializerMethodField()
+    package = serializers.SerializerMethodField()
+    package_label = serializers.SerializerMethodField()
+    subscription_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Business
@@ -39,6 +51,9 @@ class BusinessSerializer(serializers.ModelSerializer):
             "is_account_paused",
             "effective_paused",
             "can_edit",
+            "package",
+            "package_label",
+            "subscription_status",
             "created_at",
             "updated_at",
         ]
@@ -49,6 +64,15 @@ class BusinessSerializer(serializers.ModelSerializer):
         if account.id not in accounts_for_user(request.user):
             raise serializers.ValidationError("You don't have access to this account.")
         return account
+
+    def get_package(self, obj: Business) -> str | None:
+        return subscription_of(obj).package if subscription_of(obj) else None
+
+    def get_package_label(self, obj: Business) -> str | None:
+        return subscription_of(obj).package_label if subscription_of(obj) else None
+
+    def get_subscription_status(self, obj: Business) -> str:
+        return subscription_of(obj).status if subscription_of(obj) else "none"
 
     def get_can_edit(self, obj: Business) -> bool:
         """False for customers (viewer role): the UI hides every action button for them."""
@@ -71,6 +95,7 @@ class CustomerCreateSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
     full_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    package = serializers.ChoiceField(choices=[p.value for p in Package], required=False, allow_null=True)
 
     def validate(self, attrs):
         email = (attrs.get("email") or "").lower()
@@ -93,6 +118,8 @@ class CustomerCreateSerializer(serializers.Serializer):
             name=validated_data.get("business_name") or validated_data["customer_name"],
             website=validated_data.get("website") or None,
         )
+        if validated_data.get("package"):
+            Subscription.objects.create(business=business, package=validated_data["package"], started_on=timezone.localdate())
         email = validated_data.get("email")
         if email:
             user = User.objects.filter(email=email).first()

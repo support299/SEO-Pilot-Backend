@@ -10,7 +10,7 @@ from common.pagination import DefaultPagination
 from common.permissions import DenyViewerWrites, IsAccountMember, IsAgencyAdmin, accounts_for_user
 
 from .models import Account, Business
-from .serializers import BusinessSerializer, CustomerCreateSerializer
+from .serializers import BusinessSerializer, CustomerCreateSerializer, subscription_of
 
 
 def serialize_customer(account: Account) -> dict:
@@ -26,6 +26,9 @@ def serialize_customer(account: Account) -> dict:
                 "website": b.website,
                 "is_paused": b.is_paused,
                 "effective_paused": b.is_effective_paused,
+                "package": subscription_of(b).package if subscription_of(b) else None,
+                "package_label": subscription_of(b).package_label if subscription_of(b) else None,
+                "subscription_status": subscription_of(b).status if subscription_of(b) else "none",
             }
             for b in account.businesses.all()
         ],
@@ -49,7 +52,7 @@ class BusinessViewSet(viewsets.ModelViewSet):
     pagination_class = DefaultPagination
 
     def get_queryset(self):
-        return Business.objects.filter(account_id__in=accounts_for_user(self.request.user)).order_by("-created_at")
+        return Business.objects.filter(account_id__in=accounts_for_user(self.request.user)).select_related("account", "subscription").order_by("-created_at")
 
 
 class AgencyCustomersView(APIView):
@@ -63,7 +66,7 @@ class AgencyCustomersView(APIView):
     permission_classes = [IsAuthenticated, IsAgencyAdmin]
 
     def get(self, request):
-        accounts = Account.objects.prefetch_related("businesses", "memberships__user").order_by("-created_at")
+        accounts = Account.objects.prefetch_related("businesses__subscription", "memberships__user").order_by("-created_at")
         return Response([serialize_customer(account) for account in accounts])
 
     def post(self, request):
@@ -91,7 +94,7 @@ class AgencyCustomerDetailView(APIView):
 
     def get_object(self, pk: int) -> Account:
         return get_object_or_404(
-            Account.objects.prefetch_related("businesses", "memberships__user"),
+            Account.objects.prefetch_related("businesses__subscription", "memberships__user"),
             pk=pk,
         )
 

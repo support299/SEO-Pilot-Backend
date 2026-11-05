@@ -13,6 +13,7 @@ from django.conf import settings
 BASE_URL = "https://api.dataforseo.com/v3"
 MAPS_ENDPOINT = "/serp/google/maps/live/advanced"
 OK_STATUS = 20000
+NO_RESULTS_STATUS = 40102  # Google Maps has nothing for that keyword at that spot: a valid "not ranking", not a failure
 REQUEST_TIMEOUT = 60
 
 
@@ -73,6 +74,8 @@ def parse_maps_response(payload: dict) -> MapsResult:
         raise DataForSeoError(payload.get("status_message") or "DataForSEO request failed.")
     tasks = payload.get("tasks") or []
     task = tasks[0] if tasks else {}
+    if task.get("status_code") == NO_RESULTS_STATUS:
+        return MapsResult(items=[], cost=float(payload.get("cost") or task.get("cost") or 0))
     if task.get("status_code") != OK_STATUS:
         raise DataForSeoError(task.get("status_message") or "DataForSEO task failed.")
 

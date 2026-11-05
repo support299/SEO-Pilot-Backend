@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -8,6 +9,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from common.permissions import get_business_or_404, is_agency_admin
+from integrations.google import places
 
 from . import services
 from .models import GridScan, TrackedKeyword
@@ -50,6 +52,27 @@ class ProfileView(APIView):
         except services.LocalVisibilityError as exc:
             return _error(exc)
         return Response(services.serialize_profile(profile, business))
+
+
+class PlaceSearchView(APIView):
+    """Find a business on Google Maps by name/address so the grid centre doesn't have to be typed by hand."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "sync"
+
+    def get(self, request, business_id):
+        get_business_or_404(request.user, business_id)
+        query = request.query_params.get("q", "").strip()
+        if len(query) < 3:
+            return Response({"results": []})
+        if not settings.GOOGLE_PLACES_API_KEY:
+            return Response({"detail": "Address lookup isn't switched on yet: the Google Places key is missing on the server."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            found = places.search_places(settings.GOOGLE_PLACES_API_KEY, query)
+        except places.PlacesError as exc:
+            logger.warning("Places search failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"results": [vars(place) for place in found]})
 
 
 class KeywordsView(APIView):
