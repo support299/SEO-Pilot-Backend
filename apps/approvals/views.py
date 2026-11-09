@@ -3,7 +3,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from common.permissions import get_business_or_404
+from common.permissions import deny_viewer, get_business_or_404
 
 from .models import Approval
 from .services import list_approvals, record_decision, serialize_approval
@@ -14,12 +14,14 @@ DECISIONS = {Approval.Status.PENDING, Approval.Status.APPROVED, Approval.Status.
 class ApprovalListView(APIView):
     def get(self, request, business_id):
         business = get_business_or_404(request.user, business_id)
+        deny_viewer(request.user, business)
         return Response({"approvals": list_approvals(business)})
 
 
 class ApprovalDecisionView(APIView):
     def post(self, request, business_id, approval_id):
         business = get_business_or_404(request.user, business_id)
+        deny_viewer(request.user, business)
         approval = get_object_or_404(Approval, id=approval_id, business=business)
         decision = request.data.get("decision")
         if decision not in DECISIONS:

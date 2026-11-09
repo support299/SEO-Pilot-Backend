@@ -114,7 +114,7 @@ def execute_crawl(crawl_id: int) -> None:
             ]
         )
         crawl.status = CrawlRun.Status.COMPLETED
-        crawl.score = score_findings(findings)
+        crawl.score = score_findings(findings, len(pages))
         crawl.pages_crawled = len(pages)
         crawl.critical_issues = sum(1 for finding in findings if finding.severity == "critical")
         crawl.finished_at = timezone.now()

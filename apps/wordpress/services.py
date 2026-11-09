@@ -40,6 +40,7 @@ def connect(business: Business, *, website_url: str, username: str, application_
 
     if not wp.can_publish(user):
         raise WordPressIntegrationError("That WordPress user doesn't have permission to edit pages or posts.")
+    seo_plugin = _detect_plugin(api_url)
 
     secret = _encryption_secret()
     connection, _created = WordPressConnection.objects.update_or_create(
@@ -54,10 +55,60 @@ def connect(business: Business, *, website_url: str, username: str, application_
             "status": WordPressConnection.Status.CONNECTED,
             "last_verified_at": timezone.now(),
             "last_error": None,
+            "seo_plugin": seo_plugin,
+            "seo_plugin_checked_at": timezone.now(),
         },
     )
-    record_event(business, "wordpress.connected", f"Connected WordPress ({website_url}).", metadata={"website_url": website_url})
+    record_event(business, "wordpress.connected", f"Connected WordPress ({website_url}). SEO plugin: {wp.SEO_PLUGIN_LABELS[seo_plugin]}.", metadata={"website_url": website_url, "seo_plugin": seo_plugin})
     return connection
+
+
+def _detect_plugin(api_url: str) -> str:
+    """Best effort: a site that hides its REST index must not block connecting."""
+    try:
+        return wp.detect_seo_plugin(api_url)
+    except wp.WordPressError:
+        return ""
+
+
+def refresh_plugin_check(connection: WordPressConnection) -> WordPressConnection:
+    connection.seo_plugin = _detect_plugin(connection.api_url)
+    connection.seo_plugin_checked_at = timezone.now()
+    connection.save(update_fields=["seo_plugin", "seo_plugin_checked_at", "updated_at"])
+    return connection
+
+
+def set_publishing(business: Business, enabled: bool, *, user) -> WordPressConnection:
+    connection = require_connection(business)
+    if connection.publishing_enabled != enabled:
+        connection.publishing_enabled = enabled
+        connection.save(update_fields=["publishing_enabled", "updated_at"])
+        record_event(
+            business,
+            "wordpress.publishing_on" if enabled else "wordpress.publishing_off",
+            "Turned publishing to WordPress on." if enabled else "Turned publishing to WordPress off: this WordPress does not control the live site.",
+            actor=user,
+        )
+    return connection
+
+
+PUBLISHING_OFF_MESSAGE = "Publishing is off for this website: its WordPress doesn't control the live site. Track the finding in the work plan instead."
+
+
+def serialize_connection(connection: WordPressConnection) -> dict:
+    return {
+        "connected": True,
+        "website_url": connection.website_url,
+        "wp_user_name": connection.wp_user_name,
+        "status": connection.status,
+        "connected_at": connection.connected_at.isoformat(),
+        "last_verified_at": connection.last_verified_at.isoformat() if connection.last_verified_at else None,
+        "last_error": connection.last_error,
+        "publishing_enabled": connection.publishing_enabled,
+        "seo_plugin": connection.seo_plugin,
+        "seo_plugin_label": wp.SEO_PLUGIN_LABELS.get(connection.seo_plugin, connection.seo_plugin),
+        "seo_plugin_checked_at": connection.seo_plugin_checked_at.isoformat() if connection.seo_plugin_checked_at else None,
+    }
 
 
 def disconnect(business: Business) -> None:
@@ -101,6 +152,8 @@ def prepare_change_packet(business: Business, *, user, target_object_type: str, 
         raise WordPressIntegrationError("Propose at least a title or a meta description change.")
 
     connection = require_connection(business)
+    if not connection.publishing_enabled:
+        raise WordPressIntegrationError(PUBLISHING_OFF_MESSAGE)
     username, app_password = _credentials(connection)
     try:
         current = wp.fetch_object(connection.api_url, target_object_type, target_object_id, username, app_password)
@@ -177,6 +230,9 @@ def apply_change_packet(packet: ChangePacket) -> ChangePacket:
         raise WordPressIntegrationError("Approve this change before applying it.")
 
     connection = require_connection(packet.business)
+    if not connection.publishing_enabled:
+        _fail(packet, PUBLISHING_OFF_MESSAGE)
+        raise WordPressIntegrationError(PUBLISHING_OFF_MESSAGE)
     username, app_password = _credentials(connection)
 
     try:

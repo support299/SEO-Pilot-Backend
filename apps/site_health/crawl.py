@@ -134,19 +134,30 @@ def _skip_link(url: str) -> bool:
     return any(path.endswith(extension) for extension in SKIP_EXTENSIONS)
 
 
-def score_findings(findings: list[CrawlFinding]) -> int:
+SCORE_WEIGHTS = {"critical": 40, "high": 25, "medium": 15}
+
+
+def score_findings(findings: list[CrawlFinding], page_count: int) -> int:
     """
-    100 minus a fixed penalty per finding, capped at 3x the penalty for any one
-    issue type so a single site-wide issue (e.g. a menu link on every page) can't
-    zero the score on its own. This is not a Google score.
+    100 minus a penalty per issue type that grows with the *share* of crawled
+    pages the issue affects, not with the raw count: 44 pages missing alt text
+    on a 173-page site costs a few points, the same on a 50-page site costs
+    more. The square root keeps small shares visible (one broken page out of
+    200 still shows) while a site-wide issue costs at most its full weight.
+    This is not a Google score.
     """
-    penalties = {"critical": 20, "high": 10, "medium": 4}
-    per_issue: dict[str, int] = {}
+    if page_count <= 0:
+        return 100
+    affected: dict[str, set[str]] = {}
+    severity: dict[str, str] = {}
     for finding in findings:
-        per_issue[finding.title] = per_issue.get(finding.title, 0) + penalties.get(finding.severity, 0)
-    cap = {finding.title: 3 * penalties.get(finding.severity, 0) for finding in findings}
-    penalty = sum(min(total, cap[title]) for title, total in per_issue.items())
-    return max(0, 100 - penalty)
+        affected.setdefault(finding.title, set()).add(finding.url)
+        severity[finding.title] = finding.severity
+    penalty = 0.0
+    for title, urls in affected.items():
+        share = min(1.0, len(urls) / page_count)
+        penalty += SCORE_WEIGHTS.get(severity[title], 0) * share**0.5
+    return max(0, round(100 - penalty))
 
 
 def build_findings(pages: list[FetchedPage]) -> list[CrawlFinding]:

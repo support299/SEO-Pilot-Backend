@@ -49,7 +49,7 @@ def test_score_drops_for_a_page_that_did_not_load():
     ]
     findings = build_findings(pages)
     assert any(finding.severity == "critical" for finding in findings)
-    assert score_findings(findings) == 80
+    assert score_findings(findings, len(pages)) == 72  # one of two pages is down: 40 * sqrt(0.5)
 
 
 def test_missing_title_is_a_finding_and_duplicate_titles_are_too():
@@ -115,9 +115,41 @@ def test_parse_html_counts_h1_and_images_that_need_alt():
     assert parsed.images_missing_alt == 2
 
 
-def test_one_site_wide_issue_cannot_zero_the_score():
+def test_one_site_wide_issue_costs_at_most_its_weight():
     pages = [_page(f"https://saasyway.com/{i}", title=f"{GOOD_TITLE} {i}", description=f"{GOOD_DESCRIPTION} {i}", canonical="") for i in range(25)]
-    assert score_findings(build_findings(pages)) == 88
+    assert score_findings(build_findings(pages), len(pages)) == 85  # every page lacks a canonical: a medium issue, 15 points
+
+
+def test_score_depends_on_share_of_pages_not_raw_count():
+    def site(size, broken):
+        pages = [_page(f"https://saasyway.com/{i}", title=f"{GOOD_TITLE} {i}", description=f"{GOOD_DESCRIPTION} {i}", canonical=f"https://saasyway.com/{i}") for i in range(size)]
+        for page in pages[:broken]:
+            page.images_missing_alt = 3
+        return score_findings(build_findings(pages), size)
+
+    assert site(200, 44) > site(50, 44)  # same count, smaller share on the bigger site
+    assert site(50, 5) > site(50, 44)
+    assert site(200, 44) >= 90
+
+
+def test_many_small_issues_on_a_big_site_do_not_zero_the_score():
+    pages = []
+    for i in range(173):
+        pages.append(_page(f"https://saasyway.com/{i}", title=f"{GOOD_TITLE} {i}", description=f"{GOOD_DESCRIPTION} {i}", canonical=f"https://saasyway.com/{i}"))
+    for page in pages[:30]:
+        page.title = "x" * 80
+    for page in pages[30:40]:
+        page.title = "Shrt"
+    for page in pages[40:49]:
+        page.meta_description = ""
+    for page in pages[49:93]:
+        page.images_missing_alt = 2
+    for page in pages[93:98]:
+        page.canonical = ""
+    pages[98].h1_count = 0
+    pages.append(FetchedPage("https://saasyway.com/missing", 404, "text/html", "", "", "", False, False, "HTTP 404", []))
+    score = score_findings(build_findings(pages), len(pages))
+    assert 55 <= score <= 80, score
 
 
 def test_category_summaries_flag_only_categories_with_findings():

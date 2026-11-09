@@ -141,7 +141,10 @@ def wp_fetch_json(api_url: str, route: str, *, username: str | None = None, appl
     if body is not None:
         headers["content-type"] = "application/json"
 
-    response = requests.request(method, url, headers=headers, json=body, timeout=timeout, allow_redirects=False)
+    try:
+        response = requests.request(method, url, headers=headers, json=body, timeout=timeout, allow_redirects=False)
+    except requests.RequestException as exc:
+        raise WordPressError("Couldn't reach the WordPress site. Check that it is online and try again.") from exc
 
     content = response.content[: MAX_RESPONSE_BYTES + 1]
     if len(content) > MAX_RESPONSE_BYTES:
@@ -162,6 +165,22 @@ def wp_fetch_json(api_url: str, route: str, *, username: str | None = None, appl
 def verify_user(api_url: str, username: str, application_password: str) -> WpUser:
     payload = wp_fetch_json(api_url, "/wp/v2/users/me?context=edit", username=username, application_password=application_password)
     return WpUser(id=payload.get("id"), name=payload.get("name") or username, capabilities=payload.get("capabilities") or {})
+
+
+# REST namespaces each supported SEO plugin registers. The site root lists every namespace, so one
+# unauthenticated GET tells us which plugin (if any) will accept the title/description we write.
+SEO_PLUGIN_NAMESPACES = (("aioseo", "aioseo/v1"), ("yoast", "yoast/v1"), ("rank_math", "rankmath/v1"))
+SEO_PLUGIN_LABELS = {"aioseo": "All in One SEO", "yoast": "Yoast SEO", "rank_math": "Rank Math", "": "none detected"}
+
+
+def detect_seo_plugin(api_url: str) -> str:
+    """'aioseo', 'yoast', 'rank_math' or '' when none of the supported plugins is active."""
+    payload = wp_fetch_json(api_url, "/")
+    namespaces = set(payload.get("namespaces") or []) if isinstance(payload, dict) else set()
+    for key, namespace in SEO_PLUGIN_NAMESPACES:
+        if namespace in namespaces:
+            return key
+    return ""
 
 
 def can_publish(user: WpUser) -> bool:

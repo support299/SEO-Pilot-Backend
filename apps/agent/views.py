@@ -40,7 +40,7 @@ class AgentView(APIView):
 class BusinessListView(AgentView):
     def get(self, request):
         businesses = Business.objects.select_related("account").order_by("id")
-        connected = set(WordPressConnection.objects.values_list("business_id", flat=True))
+        connections = {c.business_id: c for c in WordPressConnection.objects.all()}
         return Response(
             [
                 {
@@ -48,7 +48,8 @@ class BusinessListView(AgentView):
                     "name": b.name,
                     "website": b.website,
                     "customer": b.account.name,
-                    "wordpress_connected": b.id in connected,
+                    "wordpress_connected": b.id in connections,
+                    "publishing_enabled": b.id in connections and connections[b.id].publishing_enabled,
                     "is_paused": b.is_effective_paused,
                 }
                 for b in businesses
@@ -67,6 +68,8 @@ class BusinessContextView(AgentView):
             {
                 "business": {"id": business.id, "name": business.name, "website": business.website},
                 "wordpress_connected": connection is not None and connection.status == "connected",
+                "publishing_enabled": connection is not None and connection.publishing_enabled,
+                "seo_plugin": connection.seo_plugin if connection else "",
                 "site_health": report,
                 "issues": list_approvals(business),
                 "top_queries": TopQuerySerializer(SearchConsoleTopQuery.objects.filter(business=business)[:20], many=True).data,

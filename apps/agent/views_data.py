@@ -29,7 +29,8 @@ from common.permissions import get_business_or_404
 
 from .views import AgentView
 
-MAX_TOP_ROWS = 500
+MAX_TOP_ROWS = 5000  # matches what one sync stores per site
+DEFAULT_TOP_ROWS = 500
 
 
 def _age_hours(moment) -> float | None:
@@ -117,7 +118,7 @@ class AgentSearchConsoleQueriesView(AgentView):
 
     def get(self, request, business_id):
         business = get_business_or_404(request.user, business_id)
-        return Response(TopQuerySerializer(SearchConsoleTopQuery.objects.filter(business=business)[: _limit(request, MAX_TOP_ROWS)], many=True).data)
+        return Response(TopQuerySerializer(SearchConsoleTopQuery.objects.filter(business=business)[: _limit(request, DEFAULT_TOP_ROWS)], many=True).data)
 
 
 class AgentSearchConsolePagesView(AgentView):
@@ -125,7 +126,7 @@ class AgentSearchConsolePagesView(AgentView):
 
     def get(self, request, business_id):
         business = get_business_or_404(request.user, business_id)
-        return Response(TopPageSerializer(SearchConsoleTopPage.objects.filter(business=business)[: _limit(request, MAX_TOP_ROWS)], many=True).data)
+        return Response(TopPageSerializer(SearchConsoleTopPage.objects.filter(business=business)[: _limit(request, DEFAULT_TOP_ROWS)], many=True).data)
 
 
 class AgentSearchConsoleSyncView(AgentView, sc_views.SyncView):
@@ -168,7 +169,7 @@ class AgentConnectionsView(AgentView):
             {
                 "search_console": {"connected": True, "site_url": sc.site_url, "last_synced_at": sc.last_synced_at.isoformat() if sc.last_synced_at else None, "age_hours": _age_hours(sc.last_synced_at), "last_error": sc.last_sync_error} if sc else {"connected": False},
                 "analytics": {"connected": True, "property_name": ga.property_name, "last_synced_at": ga.last_synced_at.isoformat() if ga.last_synced_at else None, "age_hours": _age_hours(ga.last_synced_at), "last_error": ga.last_sync_error, "conversions_measurable": bool(ga.conversion_events)} if ga else {"connected": False},
-                "wordpress": {"connected": wp.status == "connected", "status": wp.status, "last_verified_at": wp.last_verified_at.isoformat() if wp.last_verified_at else None, "age_hours": _age_hours(wp.last_verified_at), "last_error": wp.last_error} if wp else {"connected": False},
+                "wordpress": {"connected": wp.status == "connected", "status": wp.status, "publishing_enabled": wp.publishing_enabled, "seo_plugin": wp.seo_plugin, "last_verified_at": wp.last_verified_at.isoformat() if wp.last_verified_at else None, "age_hours": _age_hours(wp.last_verified_at), "last_error": wp.last_error} if wp else {"connected": False},
                 "crawl": {"status": crawl.status, "finished_at": crawl.finished_at.isoformat() if crawl.finished_at else None, "age_hours": _age_hours(crawl.finished_at), "error": crawl.error} if crawl else {"status": "never_run"},
                 "local_visibility": {"last_scan_at": scan.created_at.isoformat(), "age_hours": _age_hours(scan.created_at), "status": scan.status} if scan else {"last_scan_at": None},
             }

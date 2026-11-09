@@ -108,6 +108,19 @@ class TestSearchConsoleAndAnalytics:
         ga = client.get(reverse("agent:ga-overview", args=[business.id]) + "?range=28", **A(key))
         assert ga.status_code == 200 and ga.data["summary"]["sessions"] == 50 * len(ga.data["rows"]) and len(ga.data["rows"]) > 0
 
+    def test_full_query_list_up_to_five_thousand(self, client, business, key, connected):
+        SearchConsoleTopQuery.objects.bulk_create([SearchConsoleTopQuery(business=business, query=f"long tail {i}", clicks=0, impressions=1) for i in range(1200)])
+        default = client.get(reverse("agent:sc-queries", args=[business.id]), **A(key)).data
+        full = client.get(reverse("agent:sc-queries", args=[business.id]) + "?limit=5000", **A(key)).data
+        assert len(default) == 500  # default page size
+        assert len(full) == 1230  # everything stored; the cap is 5,000
+
+    def test_sync_asks_google_for_the_full_top_lists(self):
+        from integrations.google import search_console as gsc
+
+        assert gsc.TOP_ROW_LIMIT == 5000
+        assert gsc.fetch_top_queries.__defaults__ == (5000,) and gsc.fetch_top_pages.__defaults__ == (5000,)
+
     def test_connections_report_freshness_and_never_tokens(self, client, business, key, connected):
         data = client.get(reverse("agent:connections", args=[business.id]), **A(key)).data
         assert data["search_console"]["connected"] and data["search_console"]["age_hours"] == pytest.approx(9, abs=0.2)

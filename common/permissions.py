@@ -12,6 +12,14 @@ def is_viewer_of(user, account_id) -> bool:
     return Membership.objects.filter(user=user, account_id=account_id, role=Membership.Role.VIEWER).exists()
 
 
+def deny_viewer(user, business):
+    """Raise 403 for a customer login. For data that is staff-only even to read: raw crawl findings and the Approvals queue."""
+    from rest_framework.exceptions import PermissionDenied
+
+    if not is_agency_admin(user) and is_viewer_of(user, business.account_id):
+        raise PermissionDenied("This page is for your SEO team. You see the agreed work plan and its progress instead.")
+
+
 class IsAgencyAdmin(BasePermission):
     message = "Agency admin access required."
 

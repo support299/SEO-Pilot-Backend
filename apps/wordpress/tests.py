@@ -105,6 +105,90 @@ def _wordpress_secret(settings):
     settings.WORDPRESS_CREDENTIAL_ENCRYPTION_KEY = "test-secret"
 
 
+@pytest.fixture(autouse=True)
+def _no_plugin_lookup(monkeypatch):
+    """Plugin detection is a network call; tests opt in by re-patching."""
+    monkeypatch.setattr("apps.wordpress.services._detect_plugin", lambda api_url: "")
+
+
+def _make_agency_admin(email):
+    from django.contrib.auth import get_user_model
+
+    user = get_user_model().objects.get(email=email)
+    user.is_agency_admin = True
+    user.save(update_fields=["is_agency_admin"])
+
+
+class TestPluginDetection:
+    def test_connect_records_the_detected_plugin_and_status_shows_it(self, client, monkeypatch):
+        access, business = _register_and_login(client, "wp-plugin@example.com")
+        monkeypatch.setattr("apps.wordpress.services.wp.discover_api_url", lambda url: "https://example.com/wp-json")
+        monkeypatch.setattr("apps.wordpress.services.wp.verify_user", lambda *a, **kw: WpUser(id=3, name="Admin", capabilities={"edit_pages": True}))
+        monkeypatch.setattr("apps.wordpress.services._detect_plugin", lambda api_url: "aioseo")
+
+        client.post(reverse("wordpress:connect", args=[business.id]), {"website_url": "example.com", "username": "admin", "application_password": "x"}, format="json", HTTP_AUTHORIZATION=f"Bearer {access}")
+        data = client.get(reverse("wordpress:status", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}").data
+
+        assert data["seo_plugin"] == "aioseo" and data["seo_plugin_label"] == "All in One SEO"
+        assert data["publishing_enabled"] is True
+
+    def test_connection_without_a_plugin_says_none_detected(self, client):
+        access, business = _register_and_login(client, "wp-noplugin@example.com")
+        _connect(business)
+
+        data = client.get(reverse("wordpress:status", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}").data
+
+        assert data["seo_plugin"] == "" and data["seo_plugin_label"] == "none detected"
+        assert data["seo_plugin_checked_at"] is not None  # older connections are checked on first read
+
+    def test_recheck_picks_up_a_newly_installed_plugin(self, client, monkeypatch):
+        access, business = _register_and_login(client, "wp-recheck@example.com")
+        _connect(business)
+        monkeypatch.setattr("apps.wordpress.services._detect_plugin", lambda api_url: "rank_math")
+
+        data = client.post(reverse("wordpress:plugin-check", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}").data
+
+        assert data["seo_plugin_label"] == "Rank Math"
+
+    def test_detect_reads_namespaces_from_the_rest_index(self, monkeypatch):
+        from integrations.wordpress import client as wpc
+
+        monkeypatch.setattr(wpc, "wp_fetch_json", lambda api_url, route, **kw: {"namespaces": ["wp/v2", "yoast/v1"]})
+        assert wpc.detect_seo_plugin("https://example.com/wp-json") == "yoast"
+        monkeypatch.setattr(wpc, "wp_fetch_json", lambda api_url, route, **kw: {"namespaces": ["wp/v2"]})
+        assert wpc.detect_seo_plugin("https://example.com/wp-json") == ""
+
+
+class TestPublishingSwitch:
+    def test_only_agency_admins_can_switch_publishing(self, client):
+        access, business = _register_and_login(client, "wp-switch-owner@example.com")
+        _connect(business)
+
+        response = client.post(reverse("wordpress:publishing", args=[business.id]), {"enabled": False}, format="json", HTTP_AUTHORIZATION=f"Bearer {access}")
+
+        assert response.status_code == 403
+        assert WordPressConnection.objects.get(business=business).publishing_enabled is True
+
+    def test_publishing_off_refuses_proposals_and_apply(self, client, monkeypatch):
+        access, business = _register_and_login(client, "wp-switch@example.com")
+        _make_agency_admin("wp-switch@example.com")
+        _connect(business)
+        monkeypatch.setattr("apps.wordpress.services.wp.fetch_object", lambda *a, **kw: _object())
+        auth = {"HTTP_AUTHORIZATION": f"Bearer {access}"}
+        packet = client.post(reverse("wordpress:change-packets", args=[business.id]), {"target_object_type": "page", "target_object_id": 5, "proposed_changes": {"title": "New"}}, format="json", **auth).data
+        client.post(reverse("wordpress:change-packet-decision", args=[business.id, packet["id"]]), {"approve": True}, format="json", **auth)
+
+        switched = client.post(reverse("wordpress:publishing", args=[business.id]), {"enabled": False}, format="json", **auth)
+        proposal = client.post(reverse("wordpress:change-packets", args=[business.id]), {"target_object_type": "page", "target_object_id": 6, "proposed_changes": {"title": "New"}}, format="json", **auth)
+        with pytest.raises(services.WordPressIntegrationError, match="Publishing is off"):
+            services.apply_change_packet(ChangePacket.objects.get(id=packet["id"]))
+
+        assert switched.status_code == 200 and switched.data["publishing_enabled"] is False
+        assert proposal.status_code == 400 and "Publishing is off" in proposal.data["detail"]
+        assert ChangePacket.objects.get(id=packet["id"]).status == ChangePacket.Status.FAILED
+        assert client.get(reverse("wordpress:status", args=[business.id]), **auth).data["publishing_enabled"] is False
+
+
 class TestChangePacketLifecycle:
     def test_prepare_requires_a_connection(self, client):
         access, business = _register_and_login(client, "wp-prep-noconn@example.com")

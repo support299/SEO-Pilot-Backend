@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from common.permissions import get_business_or_404
+from common.permissions import get_business_or_404, is_agency_admin, is_viewer_of
 
 from .models import CrawlRun
 from .services import latest_report
@@ -18,7 +18,10 @@ logger = logging.getLogger("django")
 class SiteHealthView(APIView):
     def get(self, request, business_id):
         business = get_business_or_404(request.user, business_id)
-        return Response(latest_report(business))
+        report = latest_report(business)
+        if not is_agency_admin(request.user) and is_viewer_of(request.user, business.account_id):
+            report["findings"] = []  # customers get the score and category summary; the per-page finding list is for the SEO team
+        return Response(report)
 
 
 class StartCrawlView(APIView):

@@ -21,6 +21,11 @@ class WordPressConnection(models.Model):
     connected_at = models.DateTimeField(auto_now_add=True)
     last_verified_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(null=True, blank=True)
+    # Off when this WordPress is only a content store behind a non-WordPress live site: findings are tracked, nothing is published.
+    publishing_enabled = models.BooleanField(default=True)
+    # Which supported SEO plugin answers on the site: aioseo / yoast / rank_math, "" for none. Blank until checked.
+    seo_plugin = models.CharField(max_length=20, blank=True, default="")
+    seo_plugin_checked_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

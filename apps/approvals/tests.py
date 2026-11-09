@@ -88,3 +88,41 @@ class TestApprovals:
         hidden = other.get(reverse("approvals:list", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {other_access}")
         assert hidden.status_code == 404
         assert Approval.objects.get(id=approval["id"]).status == "pending"
+
+
+def _viewer(client, email, account_id):
+    from django.contrib.auth import get_user_model
+
+    user = get_user_model().objects.create_user(email=email, password="SuperSecret123!")
+    Membership.objects.create(account_id=account_id, user=user, role=Membership.Role.VIEWER)
+    response = client.post(reverse("accounts:login"), {"email": email, "password": "SuperSecret123!"}, format="json")
+    return response.data["access"]
+
+
+class TestCustomerVisibility:
+    def test_customer_cannot_read_or_decide_approvals(self, client):
+        access, account_id = _login(client, "appr-owner@example.com")
+        business = Business.objects.create(account_id=account_id, name="B", website="https://saasyway.com")
+        _crawl_with_findings(business, ["Missing title"])
+        approval_id = client.get(reverse("approvals:list", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}").data["approvals"][0]["id"]
+        viewer = _viewer(client, "appr-viewer@example.com", account_id)
+
+        listing = client.get(reverse("approvals:list", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {viewer}")
+        decision = client.post(reverse("approvals:decision", args=[business.id, approval_id]), {"decision": "approved"}, format="json", HTTP_AUTHORIZATION=f"Bearer {viewer}")
+
+        assert listing.status_code == 403
+        assert decision.status_code == 403
+        assert Approval.objects.get(id=approval_id).status == "pending"
+
+    def test_customer_sees_site_health_score_but_not_findings(self, client):
+        access, account_id = _login(client, "sh-owner@example.com")
+        business = Business.objects.create(account_id=account_id, name="B", website="https://saasyway.com")
+        _crawl_with_findings(business, ["Missing title"])
+        viewer = _viewer(client, "sh-viewer@example.com", account_id)
+
+        staff = client.get(reverse("site_health:report", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {access}").data
+        customer = client.get(reverse("site_health:report", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {viewer}").data
+
+        assert len(staff["findings"]) == 1
+        assert customer["findings"] == []
+        assert customer["score"] == staff["score"] == 90

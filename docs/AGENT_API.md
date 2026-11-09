@@ -23,7 +23,7 @@ Revoke a key any time in Django admin → Agent keys → "Revoke selected keys".
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `businesses/` | All customer businesses (id, name, website, customer, `wordpress_connected`) |
+| GET | `businesses/` | All customer businesses (id, name, website, customer, `wordpress_connected`, `publishing_enabled`) |
 | GET | `businesses/{id}/context/` | Site-health findings, open issues, top queries/pages, open proposals |
 | GET | `businesses/{id}/wordpress/pages/?type=page\|post` | WordPress pages/posts (ids needed to propose) |
 | GET | `businesses/{id}/local-visibility/` | Google Maps rank per tracked keyword (visibility score, average rank, top-3/top-10 coverage, movement). Add `?keyword=<id>` for that keyword's per-point grid |
@@ -32,13 +32,13 @@ Revoke a key any time in Django admin → Agent keys → "Revoke selected keys".
 | GET | `businesses/{id}/pages/` | Every page from the latest completed crawl: URL, HTTP status, title, meta description, canonical, noindex, and that page's findings. Works without WordPress |
 | POST | `businesses/{id}/crawl/` | Start a fresh crawl (free). One at a time, at most 3 per website per day |
 | GET | `businesses/{id}/search-console/?range=7\|28\|90` | Daily clicks, impressions, CTR, position + comparison with the previous period. Data lags ~2 days |
-| GET | `businesses/{id}/search-console/queries/?limit=N` | All stored top queries (context/ only gives 20) |
-| GET | `businesses/{id}/search-console/pages/?limit=N` | All stored top pages by search performance |
+| GET | `businesses/{id}/search-console/queries/?limit=N` | Stored top queries, up to 5,000 per site (default 500; context/ only gives 20) |
+| GET | `businesses/{id}/search-console/pages/?limit=N` | Stored top pages by search performance, up to 5,000 (default 500) |
 | POST | `businesses/{id}/search-console/sync/` | Refresh Search Console data now |
 | GET | `businesses/{id}/analytics/?range=7\|28\|90` | Google Analytics: organic sessions, active users, conversions (when measurable) per day |
 | POST | `businesses/{id}/analytics/sync/` | Refresh Google Analytics data now |
 | GET | `businesses/{id}/history/?page=N` | Everything done on this website, newest first, by people and agents. Read it to avoid repeating work |
-| GET | `businesses/{id}/connections/` | Each data source: connected?, last refresh, `age_hours`, last error. Check before trusting data |
+| GET | `businesses/{id}/connections/` | Each data source: connected?, last refresh, `age_hours`, last error. WordPress also reports `publishing_enabled` and `seo_plugin`. Check before trusting data |
 | GET | `businesses/{id}/plan/` | The website's package and what each capability allows: `included`, `conditional`, `optional`, `not_included` |
 | GET | `businesses/{id}/benefits/` | Whether hosting and reputation are on (`off`, `on`, `declined`, `revoked`). Read-only |
 | GET | `businesses/{id}/checklist/` | All 100 checklist items: eligibility for this package, status, findings, prerequisites, policy notes |
@@ -79,6 +79,10 @@ Proposal body:
 - `pages/` is the full URL list. `latest_crawl_status` says if a newer crawl is still queued or running.
 - Read `history/` before proposing or starting work, so you don't redo something already done or rejected.
 - Local-visibility scans cost money and stay human-only.
+- `publishing_enabled: false` on a business means its WordPress is only a content store behind a non-WordPress live
+  site. Don't propose title/meta changes there (the API refuses them); put the fix in the site plan instead.
+- `seo_plugin` is `aioseo`, `yoast`, `rank_math` or `""`. With `""`, a published title or description won't change on
+  the page and the change is marked failed. Say so rather than proposing.
 
 ## Package, checklist and scope
 

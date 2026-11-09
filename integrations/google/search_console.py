@@ -183,12 +183,16 @@ def fetch_daily_analytics(*, access_token: str, site_url: str, start_date: str, 
     return [_row_from_raw(row) for row in rows]
 
 
-def fetch_top_queries(*, access_token: str, site_url: str, start_date: str, end_date: str, limit: int = 10) -> list[AnalyticsRow]:
+# Google allows up to 25,000 rows per request. 5,000 is plenty for page planning and keeps each site's snapshot bounded.
+TOP_ROW_LIMIT = 5000
+
+
+def fetch_top_queries(*, access_token: str, site_url: str, start_date: str, end_date: str, limit: int = TOP_ROW_LIMIT) -> list[AnalyticsRow]:
     rows = _query_analytics(access_token=access_token, site_url=site_url, start_date=start_date, end_date=end_date, dimensions=["query"], row_limit=limit)
     return [_row_from_raw(row) for row in rows]
 
 
-def fetch_top_pages(*, access_token: str, site_url: str, start_date: str, end_date: str, limit: int = 10) -> list[AnalyticsRow]:
+def fetch_top_pages(*, access_token: str, site_url: str, start_date: str, end_date: str, limit: int = TOP_ROW_LIMIT) -> list[AnalyticsRow]:
     rows = _query_analytics(access_token=access_token, site_url=site_url, start_date=start_date, end_date=end_date, dimensions=["page"], row_limit=limit)
     return [_row_from_raw(row) for row in rows]
 

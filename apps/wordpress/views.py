@@ -4,7 +4,9 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from common.permissions import get_business_or_404
+from rest_framework.permissions import IsAuthenticated
+
+from common.permissions import IsAgencyAdmin, get_business_or_404
 
 from . import services
 from .models import ChangePacket
@@ -17,17 +19,39 @@ class ConnectionStatusView(APIView):
         connection = services.get_connection(business)
         if connection is None:
             return Response({"connected": False})
-        return Response(
-            {
-                "connected": True,
-                "website_url": connection.website_url,
-                "wp_user_name": connection.wp_user_name,
-                "status": connection.status,
-                "connected_at": connection.connected_at.isoformat(),
-                "last_verified_at": connection.last_verified_at.isoformat() if connection.last_verified_at else None,
-                "last_error": connection.last_error,
-            }
-        )
+        if connection.seo_plugin_checked_at is None:  # connected before the plugin check existed
+            connection = services.refresh_plugin_check(connection)
+        return Response(services.serialize_connection(connection))
+
+
+class PluginCheckView(APIView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "sync"
+
+    def post(self, request, business_id):
+        business = get_business_or_404(request.user, business_id)
+        try:
+            connection = services.require_connection(business)
+        except services.WordPressIntegrationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(services.serialize_connection(services.refresh_plugin_check(connection)))
+
+
+class PublishingView(APIView):
+    """Staff switch: off when the connected WordPress is only a content store behind a non-WordPress live site."""
+
+    permission_classes = [IsAuthenticated, IsAgencyAdmin]
+
+    def post(self, request, business_id):
+        business = get_business_or_404(request.user, business_id)
+        enabled = request.data.get("enabled")
+        if not isinstance(enabled, bool):
+            return Response({"detail": "enabled must be true or false."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            connection = services.set_publishing(business, enabled, user=request.user)
+        except services.WordPressIntegrationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(services.serialize_connection(connection))
 
 
 class ConnectView(APIView):
