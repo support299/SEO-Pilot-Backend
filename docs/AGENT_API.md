@@ -64,13 +64,33 @@ Proposal body:
 }
 ```
 
+`proposed_changes` takes any of these (at least one):
+
+| Field | Value | Fixes crawl finding |
+|---|---|---|
+| `title` | text, ≤ 200 | Title too long / too short / missing / duplicate |
+| `meta_description` | text, ≤ 320 | Description too long / too short / missing / duplicate |
+| `canonical_url` | full `https://…` address, ≤ 500 | Missing canonical tag |
+| `robots` | `"index"` or `"noindex"` | Page asks not to be indexed |
+| `image_alt` | `[{"src": "<image address>", "alt": "<text, ≤ 300>"}]`, up to 20 | Images missing alt text |
+
+Notes:
+- `image_alt`: `src` is the image address as it appears on the page (a resized `photo-300x200.jpg` matches `photo.jpg`).
+  Alt text is written to the image in the page content and to its media-library item. An image that is in neither
+  place makes the change fail with a clear message. Images set by a page builder or theme can't be reached this way.
+- `robots`: only propose `"index"` for a page that should rank. Many noindex pages (thank-you pages, archives, author
+  pages) are noindex on purpose. Check the finding and the page before proposing, and say why in `reason`.
+- Missing H1 headings and other body-content problems can't be changed through the API. Put them in the site plan.
+- After publishing, the system reads the page back. If the site ignored a value, the change is marked failed and
+  nothing is reported as live. Undo restores the previous values, including image alt text.
+
 ## Limits and rules the API enforces
 
 - Title ≤ 200 characters, meta description ≤ 320, reason ≤ 2000. Aim for ~60 and ~155 when writing.
 - One open proposal per page (409 until it is decided).
 - At most 25 proposals per business per rolling 24 h (`AGENT_MAX_PROPOSALS_PER_BUSINESS_PER_DAY`), 429 beyond that.
 - 120 requests/minute per key.
-- Only titles and meta descriptions can be changed. Everything else is out of scope.
+- Only the fields in the table above can be changed. Everything else is out of scope.
 
 ## Reading data safely
 

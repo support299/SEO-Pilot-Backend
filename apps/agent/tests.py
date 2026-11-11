@@ -112,6 +112,19 @@ class TestAgentCanReadAndPropose:
         event = Event.objects.get(business=business, kind="wordpress.change_proposed")
         assert event.actor is None and "claude-test" in event.summary
 
+    def test_canonical_robots_and_image_alt_can_be_proposed(self, client, business, agent_key, wp_ready):
+        changes = {"canonical_url": "https://acme.example/page", "robots": "index", "image_alt": [{"src": "https://acme.example/up/a.jpg", "alt": "Clean gutters"}]}
+        response = _propose(client, agent_key, business, proposed_changes=changes)
+
+        assert response.status_code == 201
+        assert ChangePacket.objects.get().proposed_changes == changes
+
+    @pytest.mark.parametrize("bad", [{"robots": "maybe"}, {"canonical_url": "not-a-url"}, {"image_alt": [{"src": "a.jpg"}]}, {}])
+    def test_bad_extra_fields_or_an_empty_proposal_are_refused(self, client, business, agent_key, wp_ready, bad):
+        response = _propose(client, agent_key, business, proposed_changes=bad)
+
+        assert response.status_code == 400 and not ChangePacket.objects.exists()
+
     def test_second_proposal_for_the_same_page_is_refused_while_one_is_open(self, client, business, agent_key, wp_ready):
         assert _propose(client, agent_key, business).status_code == 201
         assert _propose(client, agent_key, business).status_code == 409

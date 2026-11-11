@@ -384,3 +384,116 @@ class TestSnapshot:
 
     def test_site_without_aioseo_uses_page_title(self):
         assert services._snapshot(_object(title="Blog", meta={"rank_math_description": "D"})) == {"title": "Blog", "meta_description": "D"}
+
+
+class FakeWordPress:
+    """A tiny in-memory WordPress, so the real client and service code run end to end with only the HTTP call replaced."""
+
+    def __init__(self, aioseo=True, content='<p><img src="https://example.com/up/hero-300x200.jpg" alt=""> <img src="https://example.com/up/team.png"></p>'):
+        self.title, self.modified, self.content, self.meta = "Page", "2026-01-01T00:00:00", content, {}
+        self.media = {9: {"id": 9, "source_url": "https://example.com/up/hero.jpg", "alt_text": ""}}
+        self.aioseo = {"title": "Old", "description": "", "canonical_url": "", "robots_default": True, "robots_noindex": False} if aioseo else None
+
+    def __call__(self, api_url, route, *, username=None, application_password=None, method="GET", body=None, timeout=10):
+        path = route.split("?")[0]
+        if path == "/wp/v2/media":
+            return list(self.media.values())
+        if path.startswith("/wp/v2/media/"):
+            item = self.media[int(path.rsplit("/", 1)[1])]
+            item["alt_text"] = body["alt_text"]
+            return item
+        if path == "/aioseo/v1/post":
+            self.aioseo.update({k: v for k, v in body.items() if k != "id"})
+            return {}
+        assert path == "/wp/v2/pages/5", path
+        if method == "POST":
+            self.modified = "2026-02-01T00:00:00"
+            self.content = body.get("content", self.content)
+            self.title = body.get("title", self.title)
+            self.meta.update(body.get("meta") or {})
+            if self.aioseo is not None and "aioseo_meta_data" in body:
+                self.aioseo.update(body["aioseo_meta_data"])
+        if "_fields=content" in route:
+            return {"content": {"raw": self.content}}
+        if "_fields=aioseo_meta_data" in route:
+            return {"aioseo_meta_data": self.aioseo} if self.aioseo is not None else {}
+        payload = {"id": 5, "title": {"raw": self.title}, "slug": "p", "status": "publish", "link": "https://example.com/p", "modified_gmt": self.modified, "meta": self.meta}
+        if self.aioseo is not None:
+            payload["aioseo_meta_data"] = self.aioseo
+        return payload
+
+
+def _run(monkeypatch, business, fake, changes):
+    monkeypatch.setattr("integrations.wordpress.client.wp_fetch_json", fake)
+    packet = services.prepare_change_packet(business, user=None, target_object_type="page", target_object_id=5, proposed_changes=changes)
+    packet.status = ChangePacket.Status.APPROVED
+    packet.save()
+    return services.apply_change_packet(packet)
+
+
+class TestMoreFixTypes:
+    def test_image_alt_is_written_to_page_and_media_library_then_rolled_back(self, monkeypatch, client):
+        _, business = _register_and_login(client, "wp-alt@example.com")
+        _connect(business)
+        fake = FakeWordPress()
+
+        packet = _run(monkeypatch, business, fake, {"image_alt": [{"src": "https://example.com/up/hero-300x200.jpg", "alt": "Cleaned gutters"}, {"src": "https://example.com/up/team.png", "alt": "Our team"}]})
+
+        assert packet.status == ChangePacket.Status.APPLIED
+        assert 'alt="Cleaned gutters"' in fake.content and 'alt="Our team"' in fake.content
+        assert fake.media[9]["alt_text"] == "Cleaned gutters"
+
+        packet.refresh_from_db()
+        services.rollback_change_packet(packet)
+        assert 'alt="Cleaned gutters"' not in fake.content and fake.media[9]["alt_text"] == ""
+
+    def test_image_that_is_nowhere_on_the_page_fails_instead_of_claiming_success(self, monkeypatch, client):
+        _, business = _register_and_login(client, "wp-alt-missing@example.com")
+        _connect(business)
+
+        with pytest.raises(services.WordPressIntegrationError, match="alt text on 1 image"):
+            _run(monkeypatch, business, FakeWordPress(), {"image_alt": [{"src": "https://example.com/up/unknown.jpg", "alt": "x"}]})
+
+    def test_canonical_and_noindex_on_all_in_one_seo(self, monkeypatch, client):
+        _, business = _register_and_login(client, "wp-aio-robots@example.com")
+        _connect(business)
+        fake = FakeWordPress()
+        fake.aioseo.update({"robots_default": False, "robots_noindex": True})
+
+        packet = _run(monkeypatch, business, fake, {"canonical_url": "https://example.com/p", "robots": "index"})
+
+        assert packet.before_snapshot["robots"] == "noindex" and packet.after_snapshot["robots"] == "index"
+        assert fake.aioseo["canonical_url"] == "https://example.com/p" and fake.aioseo["robots_noindex"] is False
+
+        services.rollback_change_packet(ChangePacket.objects.get(id=packet.id))
+        assert fake.aioseo["robots_noindex"] is True and fake.aioseo["canonical_url"] == ""
+
+    def test_canonical_and_noindex_on_rank_math(self, monkeypatch, client):
+        _, business = _register_and_login(client, "wp-rm-robots@example.com")
+        _connect(business)
+        fake = FakeWordPress(aioseo=False)
+        fake.meta["rank_math_robots"] = ["noindex"]
+
+        packet = _run(monkeypatch, business, fake, {"canonical_url": "https://example.com/p", "robots": "index"})
+
+        assert packet.after_snapshot == {"title": "Page", "meta_description": "", "canonical_url": "https://example.com/p", "robots": "index"}
+
+    def test_a_site_that_ignores_the_setting_is_reported_not_published(self, monkeypatch, client):
+        _, business = _register_and_login(client, "wp-ignored@example.com")
+        _connect(business)
+        fake = FakeWordPress(aioseo=False)
+        fake.meta = type("Locked", (dict,), {"update": lambda self, other: None})()  # plugin that never stores our meta
+
+        with pytest.raises(services.WordPressIntegrationError, match="canonical URL"):
+            _run(monkeypatch, business, fake, {"canonical_url": "https://example.com/p"})
+
+    @pytest.mark.parametrize(
+        "bad",
+        [{"canonical_url": "example.com/p"}, {"robots": "maybe"}, {"image_alt": [{"src": "a.png"}]}, {"image_alt": "x"}, {"image_alt": [{"src": "a.png", "alt": "x"}] * 21}],
+    )
+    def test_bad_proposals_are_refused(self, bad):
+        with pytest.raises(services.WordPressIntegrationError):
+            services.clean_extra_changes(bad)
+
+    def test_old_packets_without_the_new_fields_still_roll_back(self):
+        assert services._snapshot(_object(title="T", meta={"rank_math_description": "D"})) == {"title": "T", "meta_description": "D"}

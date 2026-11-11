@@ -131,8 +131,8 @@ class ProposalsView(AgentView):
 
         raw_changes = request.data.get("proposed_changes")
         if not isinstance(raw_changes, dict):
-            return Response({"detail": "proposed_changes must be an object with a title and/or meta_description."}, status=status.HTTP_400_BAD_REQUEST)
-        changes: dict[str, str] = {}
+            return Response({"detail": "proposed_changes must be an object, for example {\"title\": ...}."}, status=status.HTTP_400_BAD_REQUEST)
+        changes: dict = {}
         for field, limit in (("title", MAX_TITLE_LENGTH), ("meta_description", MAX_DESCRIPTION_LENGTH)):
             value = raw_changes.get(field)
             if value in (None, ""):
@@ -142,8 +142,12 @@ class ProposalsView(AgentView):
             if len(value.strip()) > limit:
                 return Response({"detail": f"{field} is too long (max {limit} characters)."}, status=status.HTTP_400_BAD_REQUEST)
             changes[field] = value.strip()
+        try:
+            changes.update(wp_services.clean_extra_changes(raw_changes))
+        except wp_services.WordPressIntegrationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if not changes:
-            return Response({"detail": "Propose at least a title or a meta_description."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Propose at least one change: title, meta_description, canonical_url, robots or image_alt."}, status=status.HTTP_400_BAD_REQUEST)
 
         reason = request.data.get("reason") or ""
         if not isinstance(reason, str) or len(reason) > MAX_REASON_LENGTH:
