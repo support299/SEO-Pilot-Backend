@@ -246,3 +246,53 @@ class TestSiteHealthEndpoints:
         other_access, _ = _login(other, "health-b@example.com")
         hidden = other.get(reverse("site_health:report", args=[business.id]), HTTP_AUTHORIZATION=f"Bearer {other_access}")
         assert hidden.status_code == 404
+
+
+class TestNightlyCrawl:
+    def _sites(self):
+        from apps.businesses.models import Account, Business
+
+        account = Account.objects.create(name="Acme")
+        return {
+            "live": Business.objects.create(account=account, name="Live", website="https://live.example"),
+            "paused": Business.objects.create(account=account, name="Paused", website="https://paused.example", is_paused=True),
+            "nourl": Business.objects.create(account=account, name="NoUrl", website=""),
+            "busy": Business.objects.create(account=account, name="Busy", website="https://busy.example"),
+        }
+
+    def test_crawls_only_active_sites_with_a_url_and_no_crawl_running(self, monkeypatch):
+        from apps.site_health import tasks
+        from apps.site_health.models import CrawlRun
+
+        sites = self._sites()
+        CrawlRun.objects.create(business=sites["busy"], seed_url="https://busy.example", status=CrawlRun.Status.RUNNING)
+        queued = []
+        monkeypatch.setattr(tasks.crawl_business_site, "delay", lambda crawl_id: queued.append(crawl_id))
+
+        tasks.crawl_all_business_sites()
+
+        crawls = CrawlRun.objects.filter(id__in=queued)
+        assert [c.business_id for c in crawls] == [sites["live"].id]
+        assert crawls[0].status == CrawlRun.Status.QUEUED
+
+    def test_paused_client_account_is_skipped(self, monkeypatch):
+        from apps.site_health import tasks
+
+        sites = self._sites()
+        sites["live"].account.is_paused = True
+        sites["live"].account.save()
+        queued = []
+        monkeypatch.setattr(tasks.crawl_business_site, "delay", lambda crawl_id: queued.append(crawl_id))
+
+        tasks.crawl_all_business_sites()
+
+        assert queued == []
+
+    def test_schedule_runs_crawl_after_the_syncs(self):
+        from django.conf import settings
+
+        schedule = settings.CELERY_BEAT_SCHEDULE
+        crawl = schedule["crawl-all-sites-nightly"]["schedule"]
+        sync = schedule["sync-all-search-console-connections-daily"]["schedule"]
+        assert crawl.hour == {1} and crawl.minute == {0}
+        assert sync.hour == {0} and sync.minute == {30}

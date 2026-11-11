@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+from celery.schedules import crontab
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -164,17 +165,28 @@ CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/
 CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TIMEZONE = TIME_ZONE
+CELERY_TIMEZONE = config("NIGHTLY_TIMEZONE", default=TIME_ZONE)  # the clock the nightly jobs below follow, e.g. America/New_York
 CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=False, cast=bool)
+
+# Nightly jobs run at a fixed time (in CELERY_TIMEZONE) so fresh data is ready before the daily AI audit.
+# Syncs run first, the site crawl follows; override the times in the environment.
+NIGHTLY_SYNC_HOUR = config("NIGHTLY_SYNC_HOUR", default=0, cast=int)
+NIGHTLY_SYNC_MINUTE = config("NIGHTLY_SYNC_MINUTE", default=30, cast=int)
+NIGHTLY_CRAWL_HOUR = config("NIGHTLY_CRAWL_HOUR", default=1, cast=int)
+NIGHTLY_CRAWL_MINUTE = config("NIGHTLY_CRAWL_MINUTE", default=0, cast=int)
 
 CELERY_BEAT_SCHEDULE = {
     "sync-all-search-console-connections-daily": {
         "task": "apps.search_console.tasks.sync_all_search_console_connections",
-        "schedule": 60 * 60 * 24,  # once a day; a real deployment would use crontab() to pin a specific time
+        "schedule": crontab(hour=NIGHTLY_SYNC_HOUR, minute=NIGHTLY_SYNC_MINUTE),
     },
     "sync-all-analytics-connections-daily": {
         "task": "apps.analytics.tasks.sync_all_analytics_connections",
-        "schedule": 60 * 60 * 24,
+        "schedule": crontab(hour=NIGHTLY_SYNC_HOUR, minute=NIGHTLY_SYNC_MINUTE),
+    },
+    "crawl-all-sites-nightly": {
+        "task": "apps.site_health.tasks.crawl_all_business_sites",
+        "schedule": crontab(hour=NIGHTLY_CRAWL_HOUR, minute=NIGHTLY_CRAWL_MINUTE),
     },
     "apply-due-plan-changes-daily": {
         "task": "apps.subscriptions.tasks.apply_due_plan_changes",
